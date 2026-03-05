@@ -17,14 +17,61 @@ Requires: pip install requests matplotlib
 """
 
 import re
-import tkinter as tk
-from tkinter import simpledialog, messagebox
-import matplotlib
-matplotlib.use("TkAgg")
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import requests
+import sys
+import traceback as _tb
+
+# ── Dependency checks (print a clear message before the window even opens) ───
+def _die(msg: str) -> None:
+    print(f"\n❌  {msg}", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    import tkinter as tk
+    from tkinter import simpledialog, messagebox
+    # Smoke-test: make sure Tcl/Tk is actually linked (not just importable)
+    _r = tk.Tk()
+    _r.withdraw()
+    _r.destroy()
+    del _r
+except ImportError:
+    _die(
+        "tkinter is not available in this Python installation.\n\n"
+        "  macOS fix A — python.org build (recommended):\n"
+        "    Download Python from https://www.python.org/downloads/\n"
+        "    It bundles Tcl/Tk automatically.\n\n"
+        "  macOS fix B — Homebrew:\n"
+        "    brew install python-tk@3.12   (replace 3.12 with your version)\n"
+        "    Then re-run:  bash run.sh"
+    )
+except Exception as _e:
+    _die(
+        f"tkinter failed to initialise: {_e}\n"
+        "  This usually means no display is available or Tcl/Tk is broken.\n"
+        "  Try running the script directly in a Terminal window (not via SSH)."
+    )
+
+try:
+    import matplotlib
+    matplotlib.use("TkAgg")
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+except ImportError as _e:
+    _die(
+        f"matplotlib not found: {_e}\n"
+        "  Fix:  pip install matplotlib\n"
+        "  Or:   bash run.sh   (installs everything automatically)"
+    )
+
+try:
+    import requests
+except ImportError:
+    _die(
+        "requests not found.\n"
+        "  Fix:  pip install requests\n"
+        "  Or:   bash run.sh   (installs everything automatically)"
+    )
+
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
@@ -812,7 +859,21 @@ class BostonTempTracker:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    root = tk.Tk()
-    root.geometry("1150x780")
-    BostonTempTracker(root)
-    root.mainloop()
+    try:
+        root = tk.Tk()
+        root.geometry("1150x780")
+        BostonTempTracker(root)
+        root.mainloop()
+    except KeyboardInterrupt:
+        pass
+    except Exception:
+        # Print the full traceback to the terminal so it's readable
+        print("\n── Crash report ─────────────────────────────────", file=sys.stderr)
+        _tb.print_exc()
+        print("─────────────────────────────────────────────────", file=sys.stderr)
+        print("Press Enter to exit…", file=sys.stderr, end="", flush=True)
+        try:
+            input()
+        except Exception:
+            pass
+        sys.exit(1)
