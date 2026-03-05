@@ -72,6 +72,7 @@ except ImportError:
         "  Or:   bash run.sh   (installs everything automatically)"
     )
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
@@ -133,6 +134,32 @@ def peak_status(now_et: datetime) -> tuple[bool, str]:
     if h < PEAK_WINDOW[1]:
         return True, f"OPEN  {PEAK_WINDOW[1]-h:.1f}h left"
     return False, "Closed"
+
+
+def norm_cdf(x: float) -> float:
+    """Standard normal CDF via math.erf — no extra dependencies."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+# Treat prediction spread as ±1.5 standard deviations (≈87 % CI).
+# This converts our spread into σ for the normal probability calculation.
+_SIGMA_FACTOR = 1.5
+
+def prob_exceed(threshold: float, pred: "Prediction", current_high: float) -> float:
+    """
+    P(daily high >= threshold) given predicted distribution and current observed high.
+
+    Uses a normal model:  final_high ~ N(pred.point, σ)  where σ = pred.spread / 1.5
+    The current_high floors the distribution — if already cleared, return 1.0.
+    Returns a value in [0.0, 1.0].
+    """
+    if current_high >= threshold:
+        return 1.0
+    sigma = pred.spread / _SIGMA_FACTOR
+    if sigma <= 0:
+        return 1.0 if pred.point >= threshold else 0.0
+    z = (threshold - pred.point) / sigma
+    return 1.0 - norm_cdf(z)
 
 
 def velocity(times: list, temps: list, window_hr: float = 1.0) -> Optional[float]:
@@ -443,11 +470,16 @@ class BostonTempTracker:
         self.bet_widgets: dict = {}
         self._populate_bets()
 
+        # ── Probability ladder ────────────────────────────────────────────────
+        self.prob_ladder_outer = tk.Frame(self.root, bg=BG)
+        self.prob_ladder_outer.pack(fill="x", padx=16, pady=(4, 6))
+        self._build_prob_ladder()
+
         # ── Footer ────────────────────────────────────────────────────────────
         foot = tk.Frame(self.root, bg=BG)
         foot.pack(fill="x", padx=16, pady=(0, 6))
         tk.Label(foot,
-                 text="Data: NWS KBOS = WU  ·  METAR = WU current conditions  ·  Refreshes every 2 min",
+                 text="Data: NWS KBOS = WU  ·  METAR = WU current conditions  ·  Refreshes every 60 s",
                  font=("Helvetica", 9), fg=SUB, bg=BG).pack(side="left")
 
         self._tick()
@@ -519,27 +551,35 @@ class BostonTempTracker:
             }
 
     def _update_bets(self):
-        """Refresh colours, bars, and status text for all bet rows."""
+        """Refresh colours, bars, status text, and probabilities for all bet rows."""
         if self.day_high is None:
             return
         p   = self.prediction
         cur = self.day_high
 
         for thresh, w in self.bet_widgets.items():
-            # ── Determine status ──────────────────────────────────────────────
+            # ── Probability ───────────────────────────────────────────────────
+            pct = prob_exceed(thresh, p, cur) if p else None
+            pct_str = f"{pct * 100:.0f}%" if pct is not None else "--"
+
+            # ── Status label ──────────────────────────────────────────────────
             if cur >= thresh:
-                status, status_col, tint = "✅  CLEARED", GRN, TINT_GRN
+                status    = f"✅  CLEARED  (100%)"
+                status_col, tint = GRN, TINT_GRN
                 detail = f"+{cur - thresh:.1f}°  above  (locked in)"
-            elif p and p.low >= thresh:
-                status, status_col, tint = "📈  LIKELY", GRN, TINT_GRN
+            elif p and pct is not None and pct >= 0.70:
+                status    = f"📈  LIKELY  ({pct_str})"
+                status_col, tint = GRN, TINT_GRN
                 detail = (f"pred {p.point:.1f}°  (+{p.point - thresh:.1f}°)  "
                           f"range {p.low:.1f}–{p.high:.1f}°  [{p.confidence} conf]")
-            elif p and p.high >= thresh:
-                status, status_col, tint = "⚠   CLOSE", GOLD, TINT_GOLD
+            elif p and pct is not None and pct >= 0.35:
+                status    = f"⚠   CLOSE  ({pct_str})"
+                status_col, tint = GOLD, TINT_GOLD
                 detail = (f"pred {p.point:.1f}°  ({p.point - thresh:+.1f}°)  "
                           f"range {p.low:.1f}–{p.high:.1f}°  [{p.confidence} conf]")
             else:
-                status, status_col, tint = "❌  UNLIKELY", RED, TINT_RED
+                status    = f"❌  UNLIKELY  ({pct_str})"
+                status_col, tint = RED, TINT_RED
                 pred_str = (f"pred {p.point:.1f}° ({p.point-thresh:+.1f}°)"
                             if p else "no prediction")
                 detail = pred_str + (f"  [{p.confidence} conf]" if p else "")
@@ -558,6 +598,9 @@ class BostonTempTracker:
             # ── Draw bar ──────────────────────────────────────────────────────
             self.root.update_idletasks()
             self._draw_bar(w["bar"], thresh, cur, p, status_col, tint)
+
+        # Update the probability ladder below the bet rows
+        self._update_prob_ladder()
 
     def _draw_bar(self, canvas: tk.Canvas, thresh: float, cur_high: float,
                   pred: Optional[Prediction], color: str, tint: str):
@@ -621,6 +664,78 @@ class BostonTempTracker:
                             text=f"{thresh:.0f}°",
                             fill=WHT, font=("Helvetica", 8, "bold"), anchor="n")
 
+    def _build_prob_ladder(self):
+        """
+        Create the probability-ladder frame (called once from _build_ui).
+        Content is rebuilt each time _update_prob_ladder() is called.
+        """
+        header = tk.Frame(self.prob_ladder_outer, bg=BG)
+        header.pack(fill="x", pady=(0, 3))
+        tk.Label(header, text="PROBABILITY LADDER",
+                 font=("Helvetica", 11, "bold"), fg=WHT, bg=BG).pack(side="left")
+        tk.Label(header,
+                 text="  P(daily high > X°F) for each integer degree near predicted high",
+                 font=("Helvetica", 9), fg=SUB, bg=BG).pack(side="left")
+
+        self.prob_chips_frame = tk.Frame(self.prob_ladder_outer, bg=BG)
+        self.prob_chips_frame.pack(fill="x")
+
+    def _update_prob_ladder(self):
+        """Rebuild probability chips for the range around the current prediction."""
+        if not hasattr(self, "prob_chips_frame"):
+            return
+        for w in self.prob_chips_frame.winfo_children():
+            w.destroy()
+
+        p   = self.prediction
+        cur = self.day_high
+        if p is None or cur is None:
+            tk.Label(self.prob_chips_frame, text="Waiting for data…",
+                     font=("Helvetica", 10), fg=SUB, bg=BG).pack(side="left")
+            return
+
+        # Show integer thresholds covering roughly ±3σ around the point estimate.
+        sigma = p.spread / _SIGMA_FACTOR
+        lo = int(math.floor(p.point - 3 * sigma))
+        hi = int(math.ceil(p.point  + 3 * sigma))
+        # Always include the user's own thresholds
+        thresh_ints = sorted(set(
+            list(range(lo, hi + 1)) + [int(round(t)) for t in self.thresholds]
+        ))
+
+        for t in thresh_ints:
+            pct = prob_exceed(float(t), p, cur)
+            pct_i = int(round(pct * 100))
+
+            # Colour based on probability
+            if pct_i >= 80:
+                fg, bg_chip = BG, GRN
+            elif pct_i >= 55:
+                fg, bg_chip = BG, "#5a9e3c"   # mid-green
+            elif pct_i >= 45:
+                fg, bg_chip = BG, GOLD
+            elif pct_i >= 20:
+                fg, bg_chip = BG, "#c06020"   # burnt orange
+            else:
+                fg, bg_chip = WHT, "#3a1515"  # dark red
+
+            # Bold / larger if it's one of the user's actual bets
+            is_bet = any(abs(t - bt) < 0.5 for bt in self.thresholds)
+            font = ("Helvetica", 11, "bold") if is_bet else ("Helvetica", 10)
+            border = 2 if is_bet else 0
+
+            chip = tk.Frame(self.prob_chips_frame, bg=bg_chip,
+                            highlightbackground=WHT if is_bet else bg_chip,
+                            highlightthickness=border)
+            chip.pack(side="left", padx=2, pady=2)
+
+            tk.Label(chip, text=f"> {t}°",
+                     font=font, fg=fg, bg=bg_chip,
+                     padx=6, pady=3).pack()
+            tk.Label(chip, text=f"{pct_i}%",
+                     font=("Helvetica", 10, "bold"), fg=fg, bg=bg_chip,
+                     padx=6, pady=1).pack()
+
     def _edit_thresholds(self):
         current = ", ".join(str(int(t) if t == int(t) else t)
                             for t in sorted(self.thresholds))
@@ -640,6 +755,7 @@ class BostonTempTracker:
             self.thresholds = nums
             self._populate_bets()
             self._update_bets()
+            self._update_prob_ladder()
         except Exception as exc:
             messagebox.showerror("Invalid input", str(exc), parent=self.root)
 
