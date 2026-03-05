@@ -859,8 +859,15 @@ class BostonTempTracker:
         all_highs = list(obs_f) + list(self.metar_hist_temps)
         high = max(all_highs) if all_highs else max(obs_f)
         self.day_high = high
-        hi_idx = obs_f.index(high)
-        hi_time = obs_t[hi_idx].strftime("%I:%M %p").lstrip("0") if obs_t else "--"
+        # High may have come from METAR history (SPECI), not necessarily in obs_f
+        try:
+            hi_idx  = obs_f.index(high)
+            hi_time = obs_t[hi_idx].strftime("%I:%M %p").lstrip("0")
+        except ValueError:
+            # Find closest METAR history record matching the high
+            mh_idx  = self.metar_hist_temps.index(high) if high in self.metar_hist_temps else None
+            hi_time = (self.metar_hist_times[mh_idx].strftime("%I:%M %p").lstrip("0")
+                       if mh_idx is not None else "--")
         self._last_obs_time = obs_t[-1] if obs_t else None
 
         now_et = datetime.now(EASTERN_TZ)
@@ -871,7 +878,7 @@ class BostonTempTracker:
         # ── Stat cards ────────────────────────────────────────────────────────
         self.lbl_cur.config(text=f"{cur:.1f}°F", fg=ACC)
         self.lbl_high.config(
-            text=f"{round(high)}°F",   # whole °F matches WU's display
+            text=f"{high:.1f}°F",
             fg=GRN if (self.prev_high and high > self.prev_high) else RED)
         self.lbl_fcst.config(text=f"{fhi:.0f}°F" if fhi else "--", fg=BLUE)
 
@@ -1005,11 +1012,15 @@ class BostonTempTracker:
                             alpha=0.10, color=ACC, zorder=1)
 
             # Day high dashed line
-            hi_idx = self.obs_temps.index(self.day_high)
             ax.axhline(y=self.day_high, color=RED, linewidth=1.0,
                        linestyle="--", alpha=0.5, zorder=3)
+            try:
+                hi_idx = self.obs_temps.index(self.day_high)
+                hi_anchor = self.obs_times[hi_idx]
+            except ValueError:
+                hi_anchor = self.obs_times[-1]   # fallback: SPECI high
             ax.annotate(f"  High  {self.day_high:.1f}°F",
-                        xy=(self.obs_times[hi_idx], self.day_high),
+                        xy=(hi_anchor, self.day_high),
                         color=RED, fontsize=9, fontweight="bold", va="bottom")
 
             # Forecast high reference line
