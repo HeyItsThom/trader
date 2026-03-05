@@ -85,6 +85,7 @@ STATION_ID    = "KBOS"
 NWS_OBS_URL   = f"https://api.weather.gov/stations/{STATION_ID}/observations"
 NWS_POINTS    = "https://api.weather.gov/points/42.3601,-71.0589"
 METAR_URL     = f"https://tgftp.weather.gov/data/observations/metar/stations/{STATION_ID}.TXT"
+AVWX_METAR_URL = "https://aviationweather.gov/api/data/metar"   # includes SPECI
 WU_URL        = f"https://www.wunderground.com/history/daily/us/ma/boston/{STATION_ID}"
 HEADERS       = {"User-Agent": "BostonTempTracker/1.0 (personal trading tool)"}
 
@@ -352,6 +353,40 @@ def fetch_metar() -> tuple[Optional[float], Optional[str]]:
         return None, None
 
 
+def fetch_metar_history() -> tuple[list, list]:
+    """
+    All KBOS METARs for today including SPECI (special obs) from aviationweather.gov.
+    This is the same data WU uses — catches non-hourly highs that NWS /observations omits.
+    """
+    try:
+        resp = requests.get(
+            AVWX_METAR_URL,
+            params={"ids": STATION_ID, "format": "json", "hours": 24},
+            headers=HEADERS, timeout=15,
+        )
+        resp.raise_for_status()
+        today = datetime.now(EASTERN_TZ).date()
+        times, temps = [], []
+        for obs in resp.json():
+            temp_c   = obs.get("temp")
+            obs_time = obs.get("obsTime")
+            if temp_c is None or obs_time is None:
+                continue
+            dt = datetime.fromtimestamp(
+                obs_time, tz=zoneinfo.ZoneInfo("UTC")
+            ).astimezone(EASTERN_TZ)
+            if dt.date() == today:
+                times.append(dt)
+                temps.append(c_to_f(temp_c))
+        if times:
+            pairs = sorted(zip(times, temps))
+            times, temps = zip(*pairs)
+            times, temps = list(times), list(temps)
+        return times, temps
+    except Exception:
+        return [], []
+
+
 # ── Main application ──────────────────────────────────────────────────────────
 class BostonTempTracker:
     def __init__(self, root: tk.Tk):
@@ -450,6 +485,8 @@ class BostonTempTracker:
         gf.pack(fill="both", expand=True, padx=16, pady=(6, 0))
         self.canvas = FigureCanvasTkAgg(self.fig, master=gf)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
+        self._hover_annot = None
+        self.canvas.mpl_connect("motion_notify_event", self._on_hover)
 
         # ── Bets panel ────────────────────────────────────────────────────────
         bets_header = tk.Frame(self.root, bg=BG)
@@ -766,6 +803,7 @@ class BostonTempTracker:
             try:
                 obs_t, obs_f = fetch_observations()
                 metar_f, metar_ts = fetch_metar()
+                mh_t, mh_f = fetch_metar_history()
 
                 if fetch_fcst:
                     fct_t, fct_f, fhi = fetch_forecast()
@@ -774,7 +812,7 @@ class BostonTempTracker:
                     fct_t, fct_f, fhi = self.fcst_times, self.fcst_temps, self.fcst_high
 
                 self.root.after(0, lambda: self._apply(
-                    obs_t, obs_f, fct_t, fct_f, fhi, metar_f, metar_ts))
+                    obs_t, obs_f, fct_t, fct_f, fhi, metar_f, metar_ts, mh_t, mh_f))
             except Exception as exc:
                 msg = str(exc)
                 self.root.after(0, lambda: self._set_status(f"⚠  {msg}", RED))
@@ -799,7 +837,8 @@ class BostonTempTracker:
 
     # ── Apply data ────────────────────────────────────────────────────────────
 
-    def _apply(self, obs_t, obs_f, fct_t, fct_f, fhi, metar_f, metar_ts):
+    def _apply(self, obs_t, obs_f, fct_t, fct_f, fhi, metar_f, metar_ts,
+               mh_t=None, mh_f=None):
         if not obs_f:
             self._set_status("No observations yet for today", SUB)
             return
@@ -812,9 +851,13 @@ class BostonTempTracker:
         self.fcst_high  = fhi
         self.metar_temp = metar_f
         self.metar_time = metar_ts
+        self.metar_hist_times = mh_t or []
+        self.metar_hist_temps = mh_f or []
 
-        cur    = obs_f[-1]
-        high   = max(obs_f)
+        cur = obs_f[-1]
+        # Merge NWS obs + METAR history (includes SPECI) to match WU's data pipeline
+        all_highs = list(obs_f) + list(self.metar_hist_temps)
+        high = max(all_highs) if all_highs else max(obs_f)
         self.day_high = high
         hi_idx = obs_f.index(high)
         hi_time = obs_t[hi_idx].strftime("%I:%M %p").lstrip("0") if obs_t else "--"
@@ -828,7 +871,7 @@ class BostonTempTracker:
         # ── Stat cards ────────────────────────────────────────────────────────
         self.lbl_cur.config(text=f"{cur:.1f}°F", fg=ACC)
         self.lbl_high.config(
-            text=f"{high:.1f}°F",
+            text=f"{round(high)}°F",   # whole °F matches WU's display
             fg=GRN if (self.prev_high and high > self.prev_high) else RED)
         self.lbl_fcst.config(text=f"{fhi:.0f}°F" if fhi else "--", fg=BLUE)
 
@@ -1010,7 +1053,84 @@ class BostonTempTracker:
         ax.grid(True, alpha=0.08, color=SUB, linestyle="--")
 
         self.fig.tight_layout(pad=1.0)
+
+        # Re-create hover annotation (ax.clear() destroyed the old one)
+        self._hover_annot = self.ax.annotate(
+            "", xy=(0, 0), xytext=(15, 15),
+            textcoords="offset points",
+            bbox=dict(boxstyle="round,pad=0.5", fc=CARD, ec=PURP, lw=1.5, alpha=0.95),
+            fontsize=9, color=WHT,
+            arrowprops=dict(arrowstyle="->", color=PURP, lw=1.5),
+            zorder=20,
+        )
+        self._hover_annot.set_visible(False)
+
         self.canvas.draw()
+
+    # ── Hover tooltip ─────────────────────────────────────────────────────────
+
+    def _on_hover(self, event):
+        if self._hover_annot is None:
+            return
+        if event.inaxes != self.ax or not self.obs_times:
+            self._hover_annot.set_visible(False)
+            self.canvas.draw_idle()
+            return
+
+        # Convert matplotlib x-coordinate to a timezone-aware datetime
+        try:
+            x_dt = mdates.num2date(event.xdata).replace(tzinfo=EASTERN_TZ)
+        except Exception:
+            return
+
+        # Find nearest observed data point (within 90 minutes)
+        min_dist = float("inf")
+        closest_idx = None
+        for i, t in enumerate(self.obs_times):
+            dist = abs((t - x_dt).total_seconds())
+            if dist < min_dist:
+                min_dist = dist
+                closest_idx = i
+
+        if closest_idx is None or min_dist > 5400:
+            self._hover_annot.set_visible(False)
+            self.canvas.draw_idle()
+            return
+
+        obs_t = self.obs_times[closest_idx]
+        obs_f = self.obs_temps[closest_idx]
+
+        # Nearest NWS forecast value at that time
+        fcst_val = None
+        if self.fcst_times and self.fcst_temps:
+            min_fd = float("inf")
+            for ft, fv in zip(self.fcst_times, self.fcst_temps):
+                d = abs((ft - obs_t).total_seconds())
+                if d < min_fd:
+                    min_fd = d
+                    fcst_val = fv
+
+        time_str = obs_t.strftime("%I:%M %p ET").lstrip("0")
+        lines = [f" {time_str} "]
+        lines.append(f" Observed:  {obs_f:.1f}°F ")
+        if fcst_val is not None:
+            lines.append(f" NWS Fcst:  {fcst_val:.1f}°F ")
+        if self.prediction:
+            p = self.prediction
+            lines.append(f" Pred High: {p.point:.1f}°F ±{p.spread:.1f}° ")
+            conf_sym = {"High": "●", "Medium": "◑", "Low": "○", "Locked": "🔒"}.get(
+                p.confidence, "?"
+            )
+            lines.append(f" Conf: {conf_sym} {p.confidence} ")
+
+        self._hover_annot.set_text("\n".join(lines))
+        self._hover_annot.xy = (obs_t, obs_f)
+        # Push annotation to the left if near right edge
+        ax_width = self.ax.get_xlim()[1] - self.ax.get_xlim()[0]
+        x_frac = (mdates.date2num(obs_t) - self.ax.get_xlim()[0]) / ax_width
+        self._hover_annot.xytext = (-120, 15) if x_frac > 0.75 else (15, 15)
+        self._hover_annot.set_visible(True)
+        self.canvas.draw_idle()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
