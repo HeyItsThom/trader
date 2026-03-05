@@ -79,6 +79,23 @@ from typing import Optional
 import threading
 import webbrowser
 import zoneinfo
+import socket as _socket
+
+# ── Single-instance lock (prevents two windows fighting each other) ───────────
+_LOCK_PORT = 47_291   # arbitrary, unlikely to collide
+_lock_sock: Optional[_socket.socket] = None
+try:
+    _lock_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    _lock_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 0)
+    _lock_sock.bind(("127.0.0.1", _LOCK_PORT))
+    _lock_sock.listen(1)
+except OSError:
+    import tkinter.messagebox as _mb
+    _mb.showerror(
+        "Already Running",
+        "Boston Temp Tracker is already open.\n\nClose the other window first.",
+    )
+    sys.exit(0)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 STATION_ID    = "KBOS"
@@ -658,7 +675,6 @@ class BostonTempTracker:
             w["lbl_detail"].config(text=detail,  fg=SUB if tint == TINT_GRN else status_col)
 
             # ── Draw bar ──────────────────────────────────────────────────────
-            self.root.update_idletasks()
             self._draw_bar(w["bar"], thresh, cur, p, status_col, tint)
 
         # Update the probability ladder below the bet rows
