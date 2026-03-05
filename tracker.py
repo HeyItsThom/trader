@@ -190,7 +190,7 @@ def predict_high(obs_times: list, obs_temps: list,
                  now_et: datetime) -> Optional[Prediction]:
     """
     Blend NWS forecast + trend extrapolation, weighted by time of day.
-    Confidence range targets ±1–2°F for per-degree Robinhood betting.
+    Confidence range tightens progressively as the peak window advances.
     """
     if not obs_temps:
         return None
@@ -208,6 +208,10 @@ def predict_high(obs_times: list, obs_temps: list,
             detail=f"Peak window closed — {cur_high:.1f}°F is the day's high",
         )
 
+    # ── How far through the peak window are we? (0.0 → 1.0) ─────────────────
+    win_dur    = PEAK_WINDOW[1] - PEAK_WINDOW[0]   # hours
+    win_elapsed = max(0.0, min(1.0, (hour_frac - PEAK_WINDOW[0]) / win_dur))
+
     # ── Signal 1: NWS forecast max for today ─────────────────────────────────
     today     = now_et.date()
     fcst_vals = [v for t, v in zip(fcst_times, fcst_temps) if t.date() == today]
@@ -221,19 +225,26 @@ def predict_high(obs_times: list, obs_temps: list,
         hours_to_peak = 0.0
     trend_high = max(cur_high, obs_temps[-1] + vel * hours_to_peak)
 
-    # ── Blend weights by time of day ─────────────────────────────────────────
-    if hour_frac < 10:
-        wf, wt = 0.80, 0.20          # early: lean on forecast
+    # ── Blend weights: shift from forecast → observed as day progresses ───────
+    # Before peak window: heavy forecast weight; inside window: shift to trend
+    if hour_frac < PEAK_WINDOW[0]:
+        wf, wt = 0.80, 0.20
     elif hour_frac < peak_hr:
-        wf, wt = 0.55, 0.45
+        # Linearly shift from 0.75/0.25 to 0.45/0.55 across pre-peak portion
+        pre_frac = (hour_frac - PEAK_WINDOW[0]) / max(peak_hr - PEAK_WINDOW[0], 1)
+        wf = 0.75 - 0.30 * pre_frac
+        wt = 1.0 - wf
     else:
-        wf, wt = 0.30, 0.70          # post-peak: lean on observed trend
+        # Post-peak: obs trend dominates, forecast nearly irrelevant
+        post_frac = (hour_frac - peak_hr) / max(PEAK_WINDOW[1] - peak_hr, 1)
+        wf = max(0.10, 0.45 - 0.35 * post_frac)
+        wt = 1.0 - wf
 
     point = (wf * fcst_high + wt * trend_high) if fcst_high else trend_high
-    point = max(point, cur_high)     # prediction can't be below current high
+    point = max(point, cur_high)     # prediction can never be below current high
 
     # ── Confidence & spread ───────────────────────────────────────────────────
-    # Tight ranges (±1–2°F) to be useful for per-degree bets
+    # Base spread from forecast/trend agreement
     if fcst_high is not None:
         disagree = abs(fcst_high - trend_high)
         if disagree <= 1.5:
@@ -245,17 +256,27 @@ def predict_high(obs_times: list, obs_temps: list,
     else:
         conf, spread = "Low", 4.0
 
-    # Near the peak hour with good velocity data → tighten further
+    # Progressive tightening: spread shrinks as we move through peak window
+    # By the time we're 80% through, spread is at most 0.8× the base value
+    tighten = 1.0 - 0.45 * win_elapsed
+    spread  = round(spread * tighten * 2) / 2   # snap to nearest 0.5°
+
+    # Very close to peak with agreement → ultra-tight
     if conf == "High" and abs(hour_frac - peak_hr) < 1.0 and fcst_high:
-        spread = 1.0
+        spread = min(spread, 1.0)
+
+    # Floor: never claim tighter than ±0.5°
+    spread = max(spread, 0.5)
 
     detail_parts = []
     if fcst_high:
-        detail_parts.append(f"NWS {fcst_high:.0f}°F (×{wf:.2f})")
+        detail_parts.append(f"NWS {fcst_high:.1f}°  ×{wf:.2f}")
     detail_parts.append(
-        f"trend {trend_high:.1f}°F (vel {vel:+.1f}°/hr, ×{wt:.2f})"
+        f"trend {trend_high:.1f}°  vel {vel:+.1f}°/hr  ×{wt:.2f}"
     )
-    detail = "  +  ".join(detail_parts)
+    if win_elapsed > 0:
+        detail_parts.append(f"window {win_elapsed*100:.0f}% elapsed")
+    detail = "   ·   ".join(detail_parts)
 
     return Prediction(
         point=point,
@@ -405,7 +426,8 @@ class BostonTempTracker:
         self.fcst_high:   Optional[float] = None
         self.metar_temp:  Optional[float] = None
         self.metar_time:  Optional[str]   = None
-        self.prediction:  Optional[Prediction] = None
+        self.prediction:       Optional[Prediction] = None
+        self._prev_pred_point: Optional[float]      = None   # track delta between refreshes
         self.thresholds:  list[float] = list(DEFAULT_THRESHOLDS)
         self._refresh_job    = None
         self._secs_left      = 0
@@ -516,8 +538,11 @@ class BostonTempTracker:
         foot = tk.Frame(self.root, bg=BG)
         foot.pack(fill="x", padx=16, pady=(0, 6))
         tk.Label(foot,
-                 text="Data: NWS KBOS = WU  ·  METAR = WU current conditions  ·  Refreshes every 60 s",
+                 text="Data: NWS KBOS = WU  \u00b7  METAR = WU current conditions  \u00b7  Refreshes every 60 s",
                  font=("Helvetica", 9), fg=SUB, bg=BG).pack(side="left")
+        tk.Label(foot,
+                 text="Designed & developed by Thom Brabant  //  Claude",
+                 font=("Helvetica", 9), fg=SUB, bg=BG).pack(side="right")
 
         self._tick()
 
@@ -887,10 +912,20 @@ class BostonTempTracker:
             conf_col = {
                 "High": GRN, "Medium": GOLD, "Low": RED, "Locked": GRN
             }.get(p.confidence, SUB)
+            # Delta arrow vs previous refresh
+            if self._prev_pred_point is not None and p.confidence != "Locked":
+                diff = p.point - self._prev_pred_point
+                if abs(diff) >= 0.05:
+                    arrow = f"  \u2191{diff:+.1f}" if diff > 0 else f"  \u2193{diff:.1f}"
+                else:
+                    arrow = "  \u2192"
+            else:
+                arrow = ""
             self.lbl_pred.config(
-                text=f"{p.point:.1f}°F  ±{p.spread:.1f}°\n"
+                text=f"{p.point:.1f}°F  \u00b1{p.spread:.1f}\u00b0{arrow}\n"
                      f"{p.confidence} confidence",
                 fg=conf_col)
+            self._prev_pred_point = p.point
         else:
             self.lbl_pred.config(text="--", fg=SUB)
 
@@ -997,11 +1032,10 @@ class BostonTempTracker:
             ax.axhspan(p.low, p.high, alpha=0.08, color=PURP, zorder=1)
             ax.axhline(y=p.point, color=PURP, linewidth=1.0,
                        linestyle=":", alpha=0.8, zorder=2)
-            if self.obs_times:
-                ax.annotate(f" Pred  {p.point:.1f}° ±{p.spread:.1f}",
-                            xy=(self.obs_times[-1], p.point),
-                            color=PURP, fontsize=8, va="bottom",
-                            fontweight="bold")
+            ax.annotate(f"Pred  {p.point:.1f}° ±{p.spread:.1f}",
+                        xy=(0.98, p.point), xycoords=("axes fraction", "data"),
+                        color=PURP, fontsize=8, va="bottom", ha="right",
+                        fontweight="bold")
 
         # ── Observed temperatures ─────────────────────────────────────────────
         if self.obs_times and self.obs_temps:
@@ -1019,19 +1053,19 @@ class BostonTempTracker:
                 hi_anchor = self.obs_times[hi_idx]
             except ValueError:
                 hi_anchor = self.obs_times[-1]   # fallback: SPECI high
-            ax.annotate(f"  High  {self.day_high:.1f}°F",
-                        xy=(hi_anchor, self.day_high),
-                        color=RED, fontsize=9, fontweight="bold", va="bottom")
+            ax.annotate(f"High  {self.day_high:.1f}°F",
+                        xy=(0.98, self.day_high), xycoords=("axes fraction", "data"),
+                        color=RED, fontsize=9, fontweight="bold", va="bottom", ha="right")
 
             # Forecast high reference line
             if self.fcst_high and y_min <= self.fcst_high <= y_max:
                 ax.axhline(y=self.fcst_high, color=BLUE, linewidth=0.8,
                            linestyle=":", alpha=0.4)
 
-            # Current value label
-            ax.annotate(f"  {self.obs_temps[-1]:.1f}°F  ← now",
-                        xy=(self.obs_times[-1], self.obs_temps[-1]),
-                        color=ACC, fontsize=9, fontweight="bold", va="center")
+            # Current value label — pinned to right edge, right of the now-line
+            ax.annotate(f"{self.obs_temps[-1]:.1f}°F ← now",
+                        xy=(0.98, self.obs_temps[-1]), xycoords=("axes fraction", "data"),
+                        color=ACC, fontsize=9, fontweight="bold", va="center", ha="right")
 
         # METAR point
         if self.metar_temp is not None and y_min <= self.metar_temp <= y_max:
