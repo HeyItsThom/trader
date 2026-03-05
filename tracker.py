@@ -79,23 +79,28 @@ from typing import Optional
 import threading
 import webbrowser
 import zoneinfo
-import socket as _socket
+import os as _os
+import signal as _signal
+import atexit as _atexit
 
-# ── Single-instance lock (prevents two windows fighting each other) ───────────
-_LOCK_PORT = 47_291   # arbitrary, unlikely to collide
-_lock_sock: Optional[_socket.socket] = None
-try:
-    _lock_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-    _lock_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 0)
-    _lock_sock.bind(("127.0.0.1", _LOCK_PORT))
-    _lock_sock.listen(1)
-except OSError:
-    import tkinter.messagebox as _mb
-    _mb.showerror(
-        "Already Running",
-        "Boston Temp Tracker is already open.\n\nClose the other window first.",
-    )
-    sys.exit(0)
+# ── Single-instance: kill any previous window, then claim ownership ───────────
+_PID_FILE = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".tracker.pid")
+
+def _claim_instance() -> None:
+    """Terminate any running tracker instance, then record our own PID."""
+    if _os.path.exists(_PID_FILE):
+        try:
+            old_pid = int(open(_PID_FILE).read().strip())
+            if old_pid != _os.getpid():
+                _os.kill(old_pid, _signal.SIGTERM)
+                import time as _t; _t.sleep(0.4)   # let it die
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass  # stale or already gone
+    with open(_PID_FILE, "w") as _f:
+        _f.write(str(_os.getpid()))
+    _atexit.register(lambda: _os.unlink(_PID_FILE) if _os.path.exists(_PID_FILE) else None)
+
+_claim_instance()
 
 # ── Constants ────────────────────────────────────────────────────────────────
 STATION_ID    = "KBOS"
@@ -1023,7 +1028,7 @@ class BostonTempTracker:
                        PEAK_WINDOW[1], 0, tzinfo=EASTERN_TZ)
         ax.axvspan(pk0, pk1, alpha=0.05, color=GOLD)
 
-        # ── Bet threshold lines ───────────────────────────────────────────────
+        # ── Bet threshold lines — labels on LEFT to avoid right-edge collision ──
         for thresh in self.thresholds:
             if y_min <= thresh <= y_max:
                 cleared = self.day_high is not None and self.day_high >= thresh
@@ -1031,10 +1036,10 @@ class BostonTempTracker:
                 ax.axhline(y=thresh, color=tc, linewidth=1.3,
                            linestyle="--", alpha=0.7, zorder=1)
                 ax.annotate(f"> {thresh:.0f}°",
-                            xy=(1.0, thresh), xycoords=("axes fraction", "data"),
+                            xy=(0.0, thresh), xycoords=("axes fraction", "data"),
                             color=tc, fontsize=8, fontweight="bold",
-                            va="center", ha="right",
-                            xytext=(-4, 0), textcoords="offset points")
+                            va="center", ha="left",
+                            xytext=(4, 0), textcoords="offset points")
 
         # ── NWS forecast ─────────────────────────────────────────────────────
         if self.fcst_times and self.fcst_temps:
@@ -1048,10 +1053,12 @@ class BostonTempTracker:
             ax.axhspan(p.low, p.high, alpha=0.08, color=PURP, zorder=1)
             ax.axhline(y=p.point, color=PURP, linewidth=1.0,
                        linestyle=":", alpha=0.8, zorder=2)
+            # Pred label: right edge, ABOVE the line (+6 pt) so it clears High
             ax.annotate(f"Pred  {p.point:.1f}° ±{p.spread:.1f}",
                         xy=(0.98, p.point), xycoords=("axes fraction", "data"),
                         color=PURP, fontsize=8, va="bottom", ha="right",
-                        fontweight="bold")
+                        fontweight="bold",
+                        xytext=(0, 6), textcoords="offset points")
 
         # ── Observed temperatures ─────────────────────────────────────────────
         if self.obs_times and self.obs_temps:
@@ -1061,27 +1068,25 @@ class BostonTempTracker:
             ax.fill_between(self.obs_times, self.obs_temps, y_min,
                             alpha=0.10, color=ACC, zorder=1)
 
-            # Day high dashed line
+            # Day high dashed line — label at right, BELOW the line (−6 pt)
             ax.axhline(y=self.day_high, color=RED, linewidth=1.0,
                        linestyle="--", alpha=0.5, zorder=3)
-            try:
-                hi_idx = self.obs_temps.index(self.day_high)
-                hi_anchor = self.obs_times[hi_idx]
-            except ValueError:
-                hi_anchor = self.obs_times[-1]   # fallback: SPECI high
             ax.annotate(f"High  {self.day_high:.1f}°F",
                         xy=(0.98, self.day_high), xycoords=("axes fraction", "data"),
-                        color=RED, fontsize=9, fontweight="bold", va="bottom", ha="right")
+                        color=RED, fontsize=9, fontweight="bold", va="top", ha="right",
+                        xytext=(0, -4), textcoords="offset points")
 
             # Forecast high reference line
             if self.fcst_high and y_min <= self.fcst_high <= y_max:
                 ax.axhline(y=self.fcst_high, color=BLUE, linewidth=0.8,
                            linestyle=":", alpha=0.4)
 
-            # Current value label — pinned to right edge, right of the now-line
-            ax.annotate(f"{self.obs_temps[-1]:.1f}°F ← now",
-                        xy=(0.98, self.obs_temps[-1]), xycoords=("axes fraction", "data"),
-                        color=ACC, fontsize=9, fontweight="bold", va="center", ha="right")
+            # Current value label — mid-right, offset right of the data line end
+            cur_temp = self.obs_temps[-1]
+            ax.annotate(f"{cur_temp:.1f}°F ← now",
+                        xy=(0.98, cur_temp), xycoords=("axes fraction", "data"),
+                        color=ACC, fontsize=9, fontweight="bold", va="center", ha="right",
+                        xytext=(0, -16), textcoords="offset points")
 
         # METAR point
         if self.metar_temp is not None and y_min <= self.metar_temp <= y_max:
