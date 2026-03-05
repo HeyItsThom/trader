@@ -1,2 +1,8 @@
+# Runtime dependencies (pip install -r requirements.txt)
 requests>=2.31.0
 matplotlib>=3.8.0
+certifi>=2024.0.0
+
+# Build-time only — installed automatically by build_mac.sh, not bundled in .app
+# pyinstaller>=6.0
+# Pillow>=10.0
