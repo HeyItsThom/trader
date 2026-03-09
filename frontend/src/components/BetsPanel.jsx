@@ -102,6 +102,82 @@ function BetBar({ thresh, curHigh, pred, color }) {
   );
 }
 
+const BUFFER = 2;
+
+function SuggestedThresholds({ prediction, day_high, thresholds, setThresholds }) {
+  if (!prediction) return null;
+
+  const lo = Math.floor(prediction.low  - BUFFER);
+  const hi = Math.ceil( prediction.high + BUFFER);
+  const degrees = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+
+  function toggle(deg) {
+    const already = thresholds.includes(deg);
+    const next = already
+      ? thresholds.filter(t => t !== deg)
+      : [...thresholds, deg].sort((a, b) => a - b);
+    setThresholds(next);
+  }
+
+  return (
+    <div style={{ margin: "6px 0 10px" }}>
+      <div style={{ fontSize: 11, color: C.sub, marginBottom: 5 }}>
+        Suggested range — predicted {prediction.low.toFixed(1)}° – {prediction.high.toFixed(1)}° ±{BUFFER}° buffer · click to toggle
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+        {degrees.map(deg => {
+          const active  = thresholds.includes(deg);
+          const cleared = day_high != null && day_high >= deg;
+          const pct     = Math.round(probExceed(deg, prediction, day_high ?? 0) * 100);
+
+          // Color coding by probability
+          let bg, fg, border;
+          if (cleared) {
+            bg = "#0f2a14"; fg = C.grn; border = `2px solid ${C.grn}`;
+          } else if (pct >= 70) {
+            bg = active ? "#1a3a20" : "#0f1f12"; fg = C.grn; border = `2px solid ${active ? C.grn : "#1e4025"}`;
+          } else if (pct >= 40) {
+            bg = active ? "#2a1f00" : "#161000"; fg = C.gold; border = `2px solid ${active ? C.gold : "#2a2000"}`;
+          } else {
+            bg = active ? "#2a0f0f" : "#160808"; fg = C.red;  border = `2px solid ${active ? C.red : "#2a1010"}`;
+          }
+
+          // Highlight the core prediction range (between low and high)
+          const inCore = deg >= Math.ceil(prediction.low) && deg <= Math.floor(prediction.high);
+
+          return (
+            <button
+              key={deg}
+              onClick={() => toggle(deg)}
+              title={active ? "Click to remove" : "Click to add as bet"}
+              style={{
+                background: bg,
+                border,
+                borderRadius: 7,
+                padding: "5px 9px",
+                cursor: "pointer",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 1,
+                outline: inCore ? `1px solid ${C.purp}44` : "none",
+                outlineOffset: 2,
+                opacity: active ? 1 : 0.75,
+                transition: "opacity .1s, border-color .1s",
+              }}
+            >
+              <span style={{ fontSize: 11, fontWeight: 700, color: fg }}>
+                {active ? "✓ " : ""}&gt; {deg}°
+              </span>
+              <span style={{ fontSize: 10, color: fg }}>{pct}%</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function BetsPanel({ data, thresholds, setThresholds }) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState("");
@@ -152,7 +228,14 @@ export default function BetsPanel({ data, thresholds, setThresholds }) {
         </div>
       )}
 
-      {thresholds.length === 0 && (
+      <SuggestedThresholds
+        prediction={prediction}
+        day_high={day_high}
+        thresholds={thresholds}
+        setThresholds={setThresholds}
+      />
+
+      {thresholds.length === 0 && !prediction && (
         <p style={{ color: C.sub, fontSize: 12, padding: "8px 0" }}>
           No thresholds set. Click "Edit Thresholds" to add your bets.
         </p>
