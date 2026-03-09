@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import "./App.css";
-import StatCards        from "./components/StatCards";
-import SignalStrip      from "./components/SignalStrip";
-import TempChart        from "./components/TempChart";
-import BetsPanel        from "./components/BetsPanel";
+import { loadData }      from "./api";
+import StatCards         from "./components/StatCards";
+import SignalStrip       from "./components/SignalStrip";
+import TempChart         from "./components/TempChart";
+import BetsPanel         from "./components/BetsPanel";
 import ProbabilityLadder from "./components/ProbabilityLadder";
 
-const API_URL = "/api/data";
-const REFRESH_MS   = 60_000;
+const REFRESH_MS    = 60_000;
 const DEFAULT_THRESH = [41, 42];
 
 function useClock() {
@@ -39,11 +39,7 @@ export default function App() {
   const fetchData = useCallback(async () => {
     try {
       setStatus({ text: "Refreshing…", color: "#8b949e" });
-      const res  = await fetch(API_URL);
-      let json;
-      try { json = await res.json(); } catch { json = {}; }
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      if (json.error) throw new Error(json.error);
+      const json = await loadData();
       setData(json);
       setError(null);
       const ts = new Date().toLocaleTimeString("en-US", {
@@ -58,20 +54,15 @@ export default function App() {
     setCountdown(REFRESH_MS / 1000);
   }, []);
 
-  // Initial fetch
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Auto-refresh every 60 s
   useEffect(() => {
     timerRef.current = setInterval(fetchData, REFRESH_MS);
     return () => clearInterval(timerRef.current);
   }, [fetchData]);
 
-  // Countdown ticker
   useEffect(() => {
-    countRef.current = setInterval(() => {
-      setCountdown(c => Math.max(0, c - 1));
-    }, 1000);
+    countRef.current = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
     return () => clearInterval(countRef.current);
   }, []);
 
@@ -87,7 +78,6 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* Header */}
       <div className="header">
         <span className="header-title">Boston Temp Tracker</span>
         <span className="header-sub">KBOS · Logan Airport</span>
@@ -96,47 +86,25 @@ export default function App() {
           <span className="header-countdown">{countdownText}</span>
           <span className="header-status" style={{ color: status.color }}>{status.text}</span>
           <button className="btn" onClick={manualRefresh}>⟳ Refresh</button>
-          <a
-            href="https://www.wunderground.com/history/daily/us/ma/boston/KBOS"
-            target="_blank" rel="noreferrer"
-          >
+          <a href="https://www.wunderground.com/history/daily/us/ma/boston/KBOS"
+             target="_blank" rel="noreferrer">
             <button className="btn btn-blue">Open WU ↗</button>
           </a>
         </div>
       </div>
 
-      {/* Stat cards */}
       <StatCards data={data} />
-
-      {/* Signal strip */}
       <SignalStrip data={data} />
 
-      {/* Chart */}
       {error && !data && (
-        <div className="error">
-          {error.includes("fetch") || error.includes("ECONNREFUSED") || error.includes("NetworkError")
-            ? <>Backend not reachable — run <code>python api.py</code> in a separate terminal</>
-            : <>{error}</>
-          }
-        </div>
+        <div className="error">{error}</div>
       )}
-      {data && (
-        <TempChart data={data} thresholds={thresholds} />
-      )}
+      {data && <TempChart data={data} thresholds={thresholds} />}
 
-      {/* Bets panel */}
-      <BetsPanel
-        data={data}
-        thresholds={thresholds}
-        setThresholds={setThresholds}
-      />
+      <BetsPanel data={data} thresholds={thresholds} setThresholds={setThresholds} />
 
-      {/* Probability ladder */}
-      {data && (
-        <ProbabilityLadder data={data} thresholds={thresholds} />
-      )}
+      {data && <ProbabilityLadder data={data} thresholds={thresholds} />}
 
-      {/* Footer */}
       <div className="footer">
         <span>Data: NWS KBOS = WU · METAR = WU current conditions · Refreshes every 60 s</span>
         <span>Designed &amp; developed by Thom Brabant // Claude</span>
