@@ -40,8 +40,9 @@ export default function App() {
     try {
       setStatus({ text: "Refreshing…", color: "#8b949e" });
       const res  = await fetch(API_URL);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
+      let json;
+      try { json = await res.json(); } catch { json = {}; }
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       if (json.error) throw new Error(json.error);
       setData(json);
       setError(null);
@@ -113,8 +114,10 @@ export default function App() {
       {/* Chart */}
       {error && !data && (
         <div className="error">
-          Failed to load data: {error}<br />
-          <small>Make sure the Flask backend is running: <code>python api.py</code></small>
+          {error.includes("fetch") || error.includes("ECONNREFUSED") || error.includes("NetworkError")
+            ? <>Backend not reachable — run <code>python api.py</code> in a separate terminal</>
+            : <>{error}</>
+          }
         </div>
       )}
       {data && (
