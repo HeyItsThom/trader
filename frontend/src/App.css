@@ -1,0 +1,217 @@
+/* Colors */
+:root {
+  --bg:    #0d1117;
+  --panel: #161b22;
+  --card:  #21262d;
+  --acc:   #f0883e;
+  --red:   #ff7b72;
+  --grn:   #3fb950;
+  --blue:  #79c0ff;
+  --purp:  #bc8cff;
+  --gold:  #d29922;
+  --sub:   #8b949e;
+  --wht:   #e6edf3;
+}
+
+.app {
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 0 16px 24px;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  padding: 12px 0 6px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.header-title { font-size: 20px; font-weight: 700; color: var(--wht); }
+.header-sub   { font-size: 13px; color: var(--sub); }
+.header-clock { font-size: 13px; font-weight: 700; color: var(--acc); margin-left: 6px; }
+.header-right { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.header-status    { font-size: 12px; color: var(--sub); }
+.header-countdown { font-size: 11px; color: var(--sub); }
+
+.btn {
+  background: var(--card);
+  color: var(--wht);
+  border: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity .15s;
+}
+.btn:hover { opacity: .8; }
+.btn-blue { color: var(--blue); }
+
+/* ── Stat cards ── */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+@media (max-width: 700px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+
+.stat-card {
+  background: var(--card);
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+.stat-label { font-size: 11px; color: var(--sub); margin-bottom: 4px; }
+.stat-value { font-size: 26px; font-weight: 700; line-height: 1.1; }
+
+/* ── Signal strip ── */
+.signals {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  margin-top: 6px;
+  background: var(--panel);
+  border-radius: 6px;
+  overflow: hidden;
+}
+@media (max-width: 800px) { .signals { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 500px) { .signals { grid-template-columns: repeat(2, 1fr); } }
+
+.sig-cell {
+  background: var(--panel);
+  padding: 6px 12px;
+}
+.sig-label { font-size: 10px; color: var(--sub); margin-bottom: 2px; }
+.sig-value { font-size: 13px; font-weight: 700; color: var(--wht); }
+
+/* ── Chart ── */
+.chart-wrap {
+  background: var(--panel);
+  border-radius: 8px;
+  margin-top: 8px;
+  padding: 12px 4px 8px;
+  position: relative;
+}
+.chart-title {
+  font-size: 12px;
+  color: var(--wht);
+  padding: 0 12px 8px;
+  font-weight: 600;
+}
+
+/* Recharts overrides */
+.recharts-cartesian-axis-tick-value { fill: var(--sub) !important; font-size: 11px; }
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical   line { stroke: #30363d !important; }
+
+/* ── Chart tooltip ── */
+.chart-tooltip {
+  background: var(--card);
+  border: 1.5px solid var(--purp);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--wht);
+  box-shadow: 0 4px 20px rgba(0,0,0,.5);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.chart-tooltip-time  { color: var(--sub); margin-bottom: 5px; font-size: 11px; }
+.chart-tooltip-row   { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 2px; }
+.chart-tooltip-label { color: var(--sub); }
+.chart-tooltip-value { font-weight: 700; }
+
+/* ── Legend ── */
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  padding: 0 12px;
+  flex-wrap: wrap;
+}
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--sub); }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.legend-line {
+  width: 18px; height: 2px; flex-shrink: 0;
+  background: repeating-linear-gradient(90deg, currentColor 0 4px, transparent 4px 8px);
+}
+
+/* ── Bets panel ── */
+.bets-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px 0 4px;
+  padding: 8px 0 4px;
+}
+.bets-header h2 { font-size: 13px; font-weight: 700; color: var(--wht); }
+.bets-header span { font-size: 11px; color: var(--sub); }
+
+.bet-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 160px auto;
+  align-items: center;
+  gap: 12px;
+  border-radius: 6px;
+  padding: 8px 14px;
+  margin-bottom: 4px;
+}
+@media (max-width: 700px) {
+  .bet-row { grid-template-columns: 70px 1fr; }
+  .bet-status, .bet-detail { grid-column: 1 / -1; }
+}
+
+.bet-thresh { font-size: 17px; font-weight: 700; }
+.bet-bar-wrap { height: 26px; position: relative; border-radius: 4px; overflow: hidden; }
+.bet-status { font-size: 13px; font-weight: 700; }
+.bet-detail { font-size: 11px; color: var(--sub); }
+
+/* ── Probability ladder ── */
+.prob-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 4px 0;
+}
+.prob-header h2 { font-size: 12px; font-weight: 700; color: var(--wht); }
+.prob-header span { font-size: 10px; color: var(--sub); }
+
+.prob-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+
+.prob-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-radius: 6px;
+  padding: 4px 8px;
+  min-width: 44px;
+}
+.prob-chip-deg  { font-size: 11px; font-weight: 600; }
+.prob-chip-pct  { font-size: 12px; font-weight: 700; }
+.prob-chip.is-bet { outline: 2px solid var(--wht); }
+
+/* ── Footer ── */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--sub);
+  margin-top: 10px;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* ── Loading/error ── */
+.loading {
+  text-align: center;
+  color: var(--sub);
+  padding: 60px;
+  font-size: 16px;
+}
+.error {
+  text-align: center;
+  color: var(--red);
+  padding: 60px;
+  font-size: 14px;
+}
