@@ -30,10 +30,11 @@ function fmtTick(ts) {
 function ChartTooltip({ active, payload }) {
   if (!active || !payload || !payload.length) return null;
 
-  const obsEntry  = payload.find(p => p.dataKey === "obs");
-  const fcstEntry = payload.find(p => p.dataKey === "fcst");
-  const predEntry = payload.find(p => p.dataKey === "point");
-  const entry = obsEntry ?? fcstEntry ?? predEntry;
+  const obsEntry   = payload.find(p => p.dataKey === "obs");
+  const fcstEntry  = payload.find(p => p.dataKey === "fcst");
+  const predEntry  = payload.find(p => p.dataKey === "point");
+  const modelEntry = payload.find(p => p.dataKey === "model");
+  const entry = obsEntry ?? fcstEntry ?? predEntry ?? modelEntry;
   if (!entry) return null;
 
   const d = entry.payload;
@@ -47,6 +48,14 @@ function ChartTooltip({ active, payload }) {
           <span className="chart-tooltip-label">Observed</span>
           <span className="chart-tooltip-value" style={{ color: C.acc }}>
             {d.obs.toFixed(1)}°F
+          </span>
+        </div>
+      )}
+      {d.model != null && d.obs == null && (
+        <div className="chart-tooltip-row">
+          <span className="chart-tooltip-label">Model (15-min)</span>
+          <span className="chart-tooltip-value" style={{ color: C.sub }}>
+            {d.model.toFixed(1)}°F
           </span>
         </div>
       )}
@@ -101,7 +110,7 @@ function ChartTooltip({ active, payload }) {
 export default function TempChart({ data, thresholds = [], predHistory = [] }) {
   if (!data) return null;
 
-  const { observed = [], forecast = [], prediction, day_high, fcst_high, now } = data;
+  const { observed = [], forecast = [], model_data = [], prediction, day_high, fcst_high, now } = data;
   if (!observed.length) return null;
 
   // ── Build merged chart series ──────────────────────────────────────────────
@@ -135,7 +144,24 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
     .filter(f => new Date(f.time).getTime() > lastObsMs + 30 * 60 * 1000)
     .map(f => ({ time: new Date(f.time).getTime(), fcst: f.temp }));
 
-  const allRows = [...obsRows, ...fcstRows].sort((a, b) => a.time - b.time);
+  // Open-Meteo 15-min model rows (keyed by time, merged into allRows)
+  const modelByTime = {};
+  for (const m of model_data) {
+    modelByTime[new Date(m.time).getTime()] = m.temp;
+  }
+  const modelRows = model_data.map(m => ({
+    time: new Date(m.time).getTime(),
+    model: m.temp,
+  }));
+
+  const allRows = [...obsRows, ...fcstRows, ...modelRows]
+    .reduce((acc, row) => {
+      const existing = acc.find(r => r.time === row.time);
+      if (existing) { Object.assign(existing, row); }
+      else { acc.push({ ...row }); }
+      return acc;
+    }, [])
+    .sort((a, b) => a.time - b.time);
 
   // ── Y-axis domain ─────────────────────────────────────────────────────────
   const allTemps = [
@@ -267,6 +293,21 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
             stroke={C.wht} strokeWidth={0.7} opacity={0.25} strokeDasharray="3 4"
           />
 
+          {/* Open-Meteo 15-min model line — supplemental data density */}
+          {model_data.length > 0 && (
+            <Line
+              data={allRows.filter(r => r.model != null)}
+              type="monotone"
+              dataKey="model"
+              stroke={C.sub}
+              strokeWidth={1}
+              dot={false}
+              isAnimationActive={false}
+              name="Model (15-min)"
+              opacity={0.45}
+            />
+          )}
+
           {/* Fill under observed temps */}
           <Area
             data={obsRows}
@@ -338,6 +379,12 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
           <div className="legend-dot" style={{ background: C.blue, borderRadius: 2 }} />
           NWS Forecast
         </div>
+        {model_data.length > 0 && (
+          <div className="legend-item">
+            <div className="legend-dot" style={{ background: C.sub, opacity: 0.7 }} />
+            Open-Meteo model (15-min)
+          </div>
+        )}
         {prediction && (
           <div className="legend-item">
             <div className="legend-dot" style={{ background: C.purp }} />

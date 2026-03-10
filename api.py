@@ -27,6 +27,8 @@ AVWX_METAR_URL = "https://aviationweather.gov/api/data/metar"
 HEADERS        = {"User-Agent": "BostonTempTracker/1.0 (personal trading tool)"}
 EASTERN_TZ     = zoneinfo.ZoneInfo("America/New_York")
 
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+
 PEAK_HOUR   = {1:13,2:13,3:14,4:14,5:14,6:15,7:15,8:15,9:14,10:14,11:13,12:13}
 PEAK_WINDOW = (11, 18)
 
@@ -292,6 +294,39 @@ def fetch_metar():
     return None, None, None
 
 
+def fetch_open_meteo():
+    """15-minute model temperatures for the KBOS grid point — today up to now.
+    Free, no API key. Used to densify trend/velocity data between hourly ASOS obs."""
+    try:
+        resp = requests.get(
+            OPEN_METEO_URL,
+            params={
+                "latitude": 42.3601,
+                "longitude": -71.0589,
+                "minutely_15": "temperature_2m",
+                "temperature_unit": "fahrenheit",
+                "timezone": "America/New_York",
+                "forecast_days": 1,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        m15    = resp.json().get("minutely_15", {})
+        now_et = datetime.now(EASTERN_TZ)
+        today  = now_et.date()
+        times, temps = [], []
+        for t_str, temp in zip(m15.get("time", []), m15.get("temperature_2m", [])):
+            if temp is None:
+                continue
+            dt = datetime.fromisoformat(t_str).replace(tzinfo=EASTERN_TZ)
+            if dt.date() == today and dt <= now_et:
+                times.append(dt)
+                temps.append(temp)
+        return times, temps
+    except Exception:
+        return [], []
+
+
 def fetch_metar_history():
     try:
         resp = requests.get(
@@ -326,8 +361,9 @@ def fetch_metar_history():
 @app.route("/api/data")
 def get_data():
     try:
-        obs_times, obs_temps     = fetch_observations()
+        obs_times, obs_temps             = fetch_observations()
         mh_times, mh_temps               = fetch_metar_history()
+        om_times, om_temps               = fetch_open_meteo()
         metar_temp, metar_time, metar_dt = fetch_metar()
 
         # Last resort: use most-recent history entry if both METAR fetches failed
@@ -367,6 +403,16 @@ def get_data():
         merged_times = [x[0] for x in deduped]
         merged_temps = [x[1] for x in deduped]
 
+        # Enriched trend dataset: KBOS obs + Open-Meteo 15-min model.
+        # Used only for velocity/trend_confidence — not for day_high or cur_temp
+        # so WU matching is preserved.
+        trend_all   = sorted(
+            list(zip(merged_times, merged_temps)) + list(zip(om_times, om_temps)),
+            key=lambda x: x[0],
+        )
+        trend_times = [x[0] for x in trend_all]
+        trend_temps = [x[1] for x in trend_all]
+
         day_high = max(merged_temps) if merged_temps else None
 
         # High set time
@@ -380,7 +426,7 @@ def get_data():
 
         prediction = predict_high(merged_times, merged_temps, fcst_times, fcst_temps, now_et)
 
-        vel_val = velocity(merged_times, merged_temps)
+        vel_val = velocity(trend_times, trend_temps)
 
         # Derive trend from 1-hour velocity so it always agrees with Rate of Change
         if vel_val is None:
@@ -392,7 +438,7 @@ def get_data():
         else:
             trend = "Steady"
 
-        trend_conf, trend_conf_reason = trend_confidence(merged_times, merged_temps)
+        trend_conf, trend_conf_reason = trend_confidence(trend_times, trend_temps)
 
         pk = peak_status(now_et)
 
@@ -413,6 +459,10 @@ def get_data():
             "metar_history": [
                 {"time": t.isoformat(), "temp": v}
                 for t, v in zip(mh_times, mh_temps)
+            ],
+            "model_data": [
+                {"time": t.isoformat(), "temp": v}
+                for t, v in zip(om_times, om_temps)
             ],
             "now": now_et.isoformat(),
             "cur_temp": merged_temps[-1] if merged_temps else None,
