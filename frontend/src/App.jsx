@@ -86,7 +86,8 @@ export default function App() {
         hour: "numeric", minute: "2-digit", second: "2-digit",
         hour12: true, timeZone: "America/New_York",
       });
-      setStatus({ text: `Updated ${ts} ET  ·  ${json.obs_count} obs today`, color: "#3fb950" });
+      const lastObs = json.last_obs_time ? `  ·  last obs ${json.last_obs_time}` : "";
+      setStatus({ text: `Updated ${ts} ET${lastObs}  ·  ${json.obs_count} obs today`, color: "#3fb950" });
     } catch (e) {
       setError(e.message);
       setStatus({ text: `⚠  ${e.message}`, color: "#ff7b72" });

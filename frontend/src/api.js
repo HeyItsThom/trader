@@ -142,6 +142,20 @@ function predictHigh(obsTimes, obsTemps, fcstTimes, fcstTemps, nowEt) {
 }
 
 // ── Fetchers ──────────────────────────────────────────────────────────────────
+
+// Fetch the single most-current NWS observation (fresher than the list endpoint)
+async function fetchLatestObservation() {
+  try {
+    const res = await fetch(`${NWS_OBS_URL}/latest`, { headers: HEADERS });
+    if (!res.ok) return null;
+    const p     = (await res.json()).properties ?? {};
+    const tempC = p.temperature?.value;
+    const ts    = p.timestamp;
+    if (tempC == null || ts == null) return null;
+    return { time: new Date(ts).getTime(), temp: cToF(tempC) };
+  } catch { return null; }
+}
+
 async function fetchObservations() {
   const res = await fetch(`${NWS_OBS_URL}?limit=150`, { headers: HEADERS });
   if (!res.ok) throw new Error(`NWS observations: HTTP ${res.status}`);
@@ -210,20 +224,23 @@ async function fetchMetarHistory() {
 
 // ── Main data loader ──────────────────────────────────────────────────────────
 export async function loadData() {
-  const [obs, fcst, metar] = await Promise.all([
+  const [obs, fcst, metar, latestObs] = await Promise.all([
     fetchObservations(),
     fetchForecast(),
     fetchMetarHistory(),
+    fetchLatestObservation(),
   ]);
 
   const now    = new Date();
   const nowEt  = now; // JS Date is fine for local computation; displayed in ET via Intl
 
-  // Merge NWS obs + METAR history into a unified, time-sorted observation series.
-  // METAR is updated more frequently and is what WU displays; NWS obs can lag 30-60 min.
+  // Merge NWS obs + METAR history + latest NWS observation into a unified series.
+  // latestObs hits a dedicated endpoint that's fresher than the list and helps
+  // close the gap with WU's near-real-time METAR display.
   const combined = [
     ...obs.times.map((t, i) => ({ t, temp: obs.temps[i] })),
     ...metar.times.map((t, i) => ({ t, temp: metar.temps[i] })),
+    ...(latestObs ? [{ t: latestObs.time, temp: latestObs.temp }] : []),
   ].sort((a, b) => a.t - b.t);
 
   // Deduplicate: if two readings are within 10 min, keep the later one
@@ -300,5 +317,10 @@ export async function loadData() {
     trend_conf_reason: trendConf.reason,
     peak:          peakStatus(nowEtProxy),
     obs_count:     mergedTemps.length,
+    last_obs_time: mergedTimes.length
+      ? new Date(mergedTimes[mergedTimes.length - 1]).toLocaleTimeString("en-US", {
+          hour: "numeric", minute: "2-digit", timeZone: "America/New_York",
+        })
+      : null,
   };
 }

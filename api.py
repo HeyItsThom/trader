@@ -178,6 +178,22 @@ def parse_metar_temp(raw: str):
 
 
 # ── Data fetchers ──────────────────────────────────────────────────────────────
+def fetch_latest_observation():
+    """Fetch the single most-current NWS observation (fresher than the list endpoint)."""
+    try:
+        resp = requests.get(f"{NWS_OBS_URL}/latest", headers=HEADERS, timeout=10)
+        resp.raise_for_status()
+        props  = resp.json().get("properties", {})
+        temp_c = props.get("temperature", {}).get("value")
+        ts     = props.get("timestamp")
+        if temp_c is None or ts is None:
+            return None, None
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(EASTERN_TZ)
+        return dt, c_to_f(temp_c)
+    except Exception:
+        return None, None
+
+
 def fetch_observations():
     try:
         resp = requests.get(NWS_OBS_URL, headers=HEADERS, params={"limit": 150}, timeout=20)
@@ -271,14 +287,17 @@ def get_data():
         metar_temp, metar_time   = fetch_metar()
         mh_times, mh_temps       = fetch_metar_history()
         fcst_times, fcst_temps, fcst_high = fetch_forecast()
+        latest_obs_time, latest_obs_temp  = fetch_latest_observation()
 
         now_et = datetime.now(EASTERN_TZ)
 
-        # Merge NWS obs + METAR history into a unified time-sorted series.
-        # METAR updates more frequently (every ~20-30 min) and matches WU.
+        # Merge NWS obs + METAR history + latest NWS observation into a unified series.
+        # The /latest endpoint is fresher than the list and helps close the gap with WU.
+        latest_pair = [(latest_obs_time, latest_obs_temp)] if latest_obs_time else []
         combined = sorted(
             [(t, v) for t, v in zip(obs_times, obs_temps)] +
-            [(t, v) for t, v in zip(mh_times, mh_temps)],
+            [(t, v) for t, v in zip(mh_times, mh_temps)] +
+            latest_pair,
             key=lambda x: x[0]
         )
         # Deduplicate: within 10 min keep the later reading
@@ -349,6 +368,7 @@ def get_data():
             "trend": trend,
             "peak": pk,
             "obs_count": len(merged_temps),
+            "last_obs_time": merged_times[-1].strftime("%-I:%M %p") if merged_times else None,
         })
 
     except Exception as exc:
