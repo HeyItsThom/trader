@@ -9,6 +9,20 @@ import ProbabilityLadder from "./components/ProbabilityLadder";
 
 const REFRESH_MS    = 60_000;
 const DEFAULT_THRESH = [41, 42];
+const TODAY_KEY = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+
+function loadStoredHistory() {
+  try {
+    const raw = sessionStorage.getItem(`predHistory_${TODAY_KEY}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveHistory(history) {
+  try {
+    sessionStorage.setItem(`predHistory_${TODAY_KEY}`, JSON.stringify(history));
+  } catch {}
+}
 
 function useClock() {
   const [now, setNow] = useState(new Date());
@@ -27,11 +41,12 @@ function fmtClock(d) {
 }
 
 export default function App() {
-  const [data,       setData]       = useState(null);
-  const [status,     setStatus]     = useState({ text: "Loading…", color: "#8b949e" });
-  const [countdown,  setCountdown]  = useState(REFRESH_MS / 1000);
-  const [thresholds, setThresholds] = useState(DEFAULT_THRESH);
-  const [error,      setError]      = useState(null);
+  const [data,        setData]        = useState(null);
+  const [status,      setStatus]      = useState({ text: "Loading…", color: "#8b949e" });
+  const [countdown,   setCountdown]   = useState(REFRESH_MS / 1000);
+  const [thresholds,  setThresholds]  = useState(DEFAULT_THRESH);
+  const [error,       setError]       = useState(null);
+  const [predHistory, setPredHistory] = useState(loadStoredHistory);
   const timerRef = useRef(null);
   const countRef = useRef(null);
   const clock    = useClock();
@@ -42,6 +57,24 @@ export default function App() {
       const json = await loadData();
       setData(json);
       setError(null);
+
+      // Track prediction history throughout the day
+      if (json.prediction && json.prediction.confidence !== "Locked") {
+        const snap = {
+          time:       new Date(json.now).getTime(),
+          point:      json.prediction.point,
+          low:        json.prediction.low,
+          high:       json.prediction.high,
+          confidence: json.prediction.confidence,
+        };
+        setPredHistory(prev => {
+          // Discard if the last snapshot was within the last 3 minutes (avoid duplicates)
+          if (prev.length && snap.time - prev[prev.length - 1].time < 3 * 60_000) return prev;
+          const updated = [...prev, snap];
+          saveHistory(updated);
+          return updated;
+        });
+      }
       const ts = new Date().toLocaleTimeString("en-US", {
         hour: "numeric", minute: "2-digit", second: "2-digit",
         hour12: true, timeZone: "America/New_York",
@@ -99,7 +132,7 @@ export default function App() {
       {error && !data && (
         <div className="error">{error}</div>
       )}
-      {data && <TempChart data={data} thresholds={thresholds} />}
+      {data && <TempChart data={data} thresholds={thresholds} predHistory={predHistory} />}
 
       <BetsPanel data={data} thresholds={thresholds} setThresholds={setThresholds} />
 
