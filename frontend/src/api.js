@@ -242,7 +242,7 @@ export async function loadData() {
                        ? "matches" : `Δ ${Math.abs(metar.temps[metar.temps.length-1] - obs.temps[obs.temps.length-1]).toFixed(1)}°`
                      : null,
     prediction,
-    velocity:      velText,
+    velocity:      vel,
     trend,
     peak:          peakStatus(nowEtProxy),
     obs_count:     obs.temps.length,
