@@ -30,10 +30,10 @@ function fmtTick(ts) {
 function ChartTooltip({ active, payload }) {
   if (!active || !payload || !payload.length) return null;
 
-  const obsEntry      = payload.find(p => p.dataKey === "obs");
-  const fcstEntry     = payload.find(p => p.dataKey === "fcst");
-  const predHistEntry = payload.find(p => p.dataKey === "predHistPoint");
-  const entry = obsEntry ?? fcstEntry ?? predHistEntry;
+  const obsEntry  = payload.find(p => p.dataKey === "obs");
+  const fcstEntry = payload.find(p => p.dataKey === "fcst");
+  const predEntry = payload.find(p => p.dataKey === "point");
+  const entry = obsEntry ?? fcstEntry ?? predEntry;
   if (!entry) return null;
 
   const d = entry.payload;
@@ -59,24 +59,26 @@ function ChartTooltip({ active, payload }) {
         </div>
       )}
       {/* Prediction history snapshot */}
-      {predHistEntry && d.predHistPoint != null && (
+      {d.point != null && (
         <>
           <div className="chart-tooltip-row">
-            <span className="chart-tooltip-label">Pred High (then)</span>
+            <span className="chart-tooltip-label">Pred at this time</span>
             <span className="chart-tooltip-value" style={{ color: C.purp }}>
-              {d.predHistPoint.toFixed(1)}°F ±{d.predHistSpread?.toFixed(1)}°
+              {d.point.toFixed(1)}°F ±{((d.high - d.low) / 2).toFixed(1)}°
             </span>
           </div>
-          <div className="chart-tooltip-row">
-            <span className="chart-tooltip-label">Confidence</span>
-            <span className="chart-tooltip-value" style={{ color: C.purp }}>
-              {d.predHistConf}
-            </span>
-          </div>
+          {d.confidence && (
+            <div className="chart-tooltip-row">
+              <span className="chart-tooltip-label">Confidence</span>
+              <span className="chart-tooltip-value" style={{ color: C.purp }}>
+                {d.confidence}
+              </span>
+            </div>
+          )}
         </>
       )}
-      {/* Current prediction on latest observed point */}
-      {d.isLatest && d.predPoint != null && (
+      {/* Current prediction shown on latest obs point */}
+      {d.isLatest && d.predPoint != null && !d.point && (
         <>
           <div className="chart-tooltip-row">
             <span className="chart-tooltip-label">Pred High</span>
@@ -103,28 +105,18 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
   if (!observed.length) return null;
 
   // ── Build merged chart series ──────────────────────────────────────────────
-  // Key: ISO timestamp string → value
-  const fcstMap = {};
-  for (const f of forecast) {
-    const ms = new Date(f.time).getTime();
-    // round to nearest hour for matching
-    const hourMs = Math.round(ms / 3600000) * 3600000;
-    fcstMap[hourMs] = f.temp;
-  }
-
   const nowMs = now ? new Date(now).getTime() : Date.now();
 
   const obsRows = observed.map((o, i) => {
     const ms = new Date(o.time).getTime();
-    const hourMs = Math.round(ms / 3600000) * 3600000;
-    // match nearest NWS forecast within 30 min
+    // match nearest NWS forecast within 90 min
     let fcst = null;
     let minDiff = Infinity;
     for (const f of forecast) {
       const diff = Math.abs(new Date(f.time).getTime() - ms);
       if (diff < minDiff) { minDiff = diff; fcst = f.temp; }
     }
-    if (minDiff > 90 * 60 * 1000) fcst = null; // >90 min → don't show
+    if (minDiff > 90 * 60 * 1000) fcst = null;
 
     return {
       time: ms,
@@ -275,37 +267,6 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
             stroke={C.wht} strokeWidth={0.7} opacity={0.25} strokeDasharray="3 4"
           />
 
-          {/* Prediction history band (uncertainty range over time) */}
-          {predHistory.length > 1 && (
-            <Area
-              data={predHistory}
-              type="monotone"
-              dataKey="predHistHigh"
-              stroke="none"
-              fill={C.purp}
-              fillOpacity={0.07}
-              isAnimationActive={false}
-              legendType="none"
-              connectNulls
-            />
-          )}
-
-          {/* Prediction history point line */}
-          {predHistory.length > 1 && (
-            <Line
-              data={predHistory}
-              type="monotone"
-              dataKey="predHistPoint"
-              stroke={C.purp}
-              strokeWidth={1.5}
-              strokeDasharray="3 2"
-              dot={false}
-              activeDot={{ r: 4, fill: C.purp, stroke: C.wht, strokeWidth: 1 }}
-              isAnimationActive={false}
-              name="Pred High (history)"
-            />
-          )}
-
           {/* Fill under observed temps */}
           <Area
             data={obsRows}
@@ -330,6 +291,22 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
             isAnimationActive={false}
             name="NWS Forecast"
           />
+
+          {/* Prediction tracking line — shows how predicted high evolved throughout the day */}
+          {predHistory.length > 1 && (
+            <Line
+              data={predHistory}
+              type="monotone"
+              dataKey="point"
+              stroke={C.purp}
+              strokeWidth={2}
+              dot={{ r: 3, fill: C.purp, strokeWidth: 0 }}
+              activeDot={{ r: 5, fill: C.purp, stroke: C.wht, strokeWidth: 1.5 }}
+              isAnimationActive={false}
+              name="Pred Track"
+              opacity={0.85}
+            />
+          )}
 
           {/* Observed temperature line */}
           <Line
@@ -364,13 +341,13 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
         {prediction && (
           <div className="legend-item">
             <div className="legend-dot" style={{ background: C.purp }} />
-            Prediction ±{prediction.spread.toFixed(1)}° ({prediction.confidence})
+            Pred High {prediction.point.toFixed(1)}° ±{prediction.spread.toFixed(1)}° ({prediction.confidence})
           </div>
         )}
         {predHistory.length > 1 && (
           <div className="legend-item">
-            <div className="legend-dot" style={{ background: C.purp, opacity: 0.5, borderRadius: 2 }} />
-            Pred High history
+            <div className="legend-dot" style={{ background: C.purp, opacity: 0.6 }} />
+            Pred Track ({predHistory.length} pts)
           </div>
         )}
         <div className="legend-item" style={{ marginLeft: "auto", color: C.gold, fontSize: 10 }}>

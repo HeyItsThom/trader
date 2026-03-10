@@ -9,7 +9,7 @@ import ProbabilityLadder from "./components/ProbabilityLadder";
 
 const REFRESH_MS = 60_000;
 
-// Prediction history: keyed by today's date in ET so it auto-clears each day
+// Prediction history keyed by today's date in ET — auto-clears each new day
 const TODAY_KEY = `predHistory_${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })}`;
 
 function loadHistory() {
@@ -17,6 +17,10 @@ function loadHistory() {
     const raw = localStorage.getItem(TODAY_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
+}
+
+function saveHistory(history) {
+  try { localStorage.setItem(TODAY_KEY, JSON.stringify(history)); } catch {}
 }
 
 function loadThresholds() {
@@ -59,32 +63,30 @@ export default function App() {
       const json = await loadData();
       setData(json);
       setError(null);
+
+      // Accumulate prediction history throughout the day (one snapshot per refresh)
+      if (json.prediction && json.prediction.confidence !== "Locked") {
+        const snap = {
+          time:       new Date(json.now).getTime(),
+          point:      json.prediction.point,
+          low:        json.prediction.low,
+          high:       json.prediction.high,
+          confidence: json.prediction.confidence,
+        };
+        setPredHistory(prev => {
+          // If last snapshot was within 3 min, skip (handles rapid manual refreshes)
+          if (prev.length && snap.time - prev[prev.length - 1].time < 3 * 60_000) return prev;
+          const updated = [...prev, snap];
+          saveHistory(updated);
+          return updated;
+        });
+      }
+
       const ts = new Date().toLocaleTimeString("en-US", {
         hour: "numeric", minute: "2-digit", second: "2-digit",
         hour12: true, timeZone: "America/New_York",
       });
       setStatus({ text: `Updated ${ts} ET  ·  ${json.obs_count} obs today`, color: "#3fb950" });
-
-      // Accumulate prediction history (one snapshot per refresh)
-      if (json.prediction) {
-        const newEntry = {
-          time:            Date.now(),
-          predHistPoint:   json.prediction.point,
-          predHistHigh:    json.prediction.high,
-          predHistLow:     json.prediction.low,
-          predHistSpread:  json.prediction.spread,
-          predHistConf:    json.prediction.confidence,
-        };
-        setPredHistory(prev => {
-          const last = prev[prev.length - 1];
-          // Within 2 min of last entry → update in place (handles manual refreshes)
-          const updated = (last && Math.abs(last.time - newEntry.time) < 2 * 60 * 1000)
-            ? [...prev.slice(0, -1), newEntry]
-            : [...prev, newEntry];
-          localStorage.setItem(TODAY_KEY, JSON.stringify(updated));
-          return updated;
-        });
-      }
     } catch (e) {
       setError(e.message);
       setStatus({ text: `⚠  ${e.message}`, color: "#ff7b72" });

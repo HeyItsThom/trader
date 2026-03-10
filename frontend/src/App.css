@@ -68,15 +68,15 @@
 /* ── Signal strip ── */
 .signals {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
   gap: 2px;
   margin-top: 6px;
   background: var(--panel);
   border-radius: 6px;
   overflow: hidden;
 }
-@media (max-width: 800px) { .signals { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 500px) { .signals { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 900px) { .signals { grid-template-columns: 1fr 1fr 1fr; } }
+@media (max-width: 500px) { .signals { grid-template-columns: 1fr 1fr; } }
 
 .sig-cell {
   background: var(--panel);
@@ -84,6 +84,27 @@
 }
 .sig-label { font-size: 10px; color: var(--sub); margin-bottom: 2px; }
 .sig-value { font-size: 13px; font-weight: 700; color: var(--wht); }
+
+/* Trend — enlarged hero cell */
+.sig-cell--trend {
+  background: var(--card);
+  padding: 8px 16px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+.sig-trend-icon {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.5px;
+}
+.sig-trend-conf {
+  font-size: 11px;
+  font-weight: 600;
+}
 
 /* ── Chart ── */
 .chart-wrap {

@@ -41,6 +41,36 @@ function velocity(times, temps, windowHr = 1.0) {
   return (pairs[pairs.length - 1][1] - pairs[0][1]) / dtHr;
 }
 
+// Trend confidence: compare velocity across multiple windows to gauge consistency
+function trendConfidence(times, temps) {
+  if (times.length < 4) return { conf: "Low", reason: "few obs" };
+
+  const v30  = velocity(times, temps, 0.5);
+  const v60  = velocity(times, temps, 1.0);
+  const v120 = velocity(times, temps, 2.0);
+
+  const vels = [v30, v60, v120].filter(v => v != null);
+  if (vels.length < 2) return { conf: "Low", reason: "few obs" };
+
+  // Classify each velocity direction (ignore near-zero as neutral)
+  const dirs = vels.map(v => (v > 0.3 ? 1 : v < -0.3 ? -1 : 0));
+  const nonFlat = dirs.filter(d => d !== 0);
+  const uniqueDirs = new Set(nonFlat);
+
+  if (uniqueDirs.size > 1) return { conf: "Low", reason: "conflicting" };
+  if (uniqueDirs.size === 0) return { conf: "Medium", reason: "near-flat" };
+
+  // Magnitude consistency: how close are the rates?
+  const magnitudes = vels.map(Math.abs);
+  const maxV = Math.max(...magnitudes);
+  const minV = Math.min(...magnitudes);
+  const consistency = maxV > 0.1 ? minV / maxV : 0;
+
+  if (consistency >= 0.55) return { conf: "High", reason: "consistent" };
+  if (consistency >= 0.25) return { conf: "Medium", reason: "moderate" };
+  return { conf: "Low", reason: "variable rate" };
+}
+
 function peakStatus(nowEt) {
   const h = nowEt.getHours() + nowEt.getMinutes() / 60;
   if (h < PEAK_WINDOW[0]) return { open: false, label: `Opens in ${(PEAK_WINDOW[0]-h).toFixed(1)}h` };
@@ -108,7 +138,7 @@ function predictHigh(obsTimes, obsTemps, fcstTimes, fcstTemps, nowEt) {
   parts.push(`trend ${trendHigh.toFixed(1)}°  vel ${vel >= 0 ? "+" : ""}${vel.toFixed(1)}°/hr  ×${wt.toFixed(2)}`);
   if (winElapsed > 0) parts.push(`window ${(winElapsed*100).toFixed(0)}% elapsed`);
 
-  return { point, low: point-spread, high: point+spread, spread, confidence: conf, detail: parts.join("   ·   ") };
+  return { point, low: point-spread, high: point+spread, spread, confidence: conf, trendHigh, vel, wf, wt, detail: parts.join("   ·   ") };
 }
 
 // ── Fetchers ──────────────────────────────────────────────────────────────────
@@ -242,6 +272,8 @@ export async function loadData() {
   const delta  = recent.length >= 2 ? recent[recent.length-1] - recent[0] : 0;
   const trend  = delta > 1 ? "Rising" : delta < -1 ? "Falling" : "Steady";
 
+  const trendConf = trendConfidence(obs.times, obs.temps);
+
   return {
     observed:      mergedTimes.map((t, i) => ({ time: new Date(t).toISOString(), temp: mergedTemps[i] })),
     forecast:      fcst.times.map((t, i) => ({ time: new Date(t).toISOString(), temp: fcst.temps[i] })),
@@ -256,6 +288,8 @@ export async function loadData() {
     prediction,
     velocity:      vel,
     trend,
+    trend_conf:    trendConf.conf,
+    trend_conf_reason: trendConf.reason,
     peak:          peakStatus(nowEtProxy),
     obs_count:     mergedTemps.length,
   };
