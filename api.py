@@ -6,6 +6,8 @@ Exposes all data-fetching logic as JSON endpoints for the React frontend.
 
 import re
 import math
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from typing import Optional
@@ -36,6 +38,35 @@ MONTHLY_AVG_HIGH = {1:36.4,2:38.9,3:46.6,4:56.5,5:66.7,6:76.1,
                     7:81.8,8:79.6,9:72.4,10:62.0,11:52.6,12:40.8}
 
 _SIGMA_FACTOR = 1.5
+
+
+# ── In-memory observation cache ────────────────────────────────────────────────
+# Accumulates all successfully-fetched (dt, temp) pairs keyed by date string.
+# Prevents chart gaps when upstream APIs (AVWX, NWS) are temporarily unavailable.
+# Two stores: _chart_cache (all sources) and _metar_cache (METAR-only, for day_high).
+_cache_lock   = threading.Lock()
+_chart_cache: dict = {}   # date_str -> sorted list of (dt, temp)
+_metar_cache: dict = {}   # date_str -> sorted list of (dt, temp), METAR precision only
+
+
+def _cache_add(store: dict, date_str: str, points: list):
+    """Merge new points into store[date_str], keeping sorted + 10-min deduped."""
+    if not points:
+        return
+    with _cache_lock:
+        combined = sorted(store.get(date_str, []) + points, key=lambda x: x[0])
+        deduped = []
+        for t, v in combined:
+            if deduped and (t - deduped[-1][0]).total_seconds() < 600:
+                deduped[-1] = (t, v)   # keep the later reading
+            else:
+                deduped.append((t, v))
+        store[date_str] = deduped
+
+
+def _cache_get(store: dict, date_str: str) -> list:
+    with _cache_lock:
+        return list(store.get(date_str, []))
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -222,21 +253,21 @@ def fetch_observations():
     try:
         resp = requests.get(NWS_OBS_URL, headers=HEADERS, params={"limit": 150}, timeout=20)
         resp.raise_for_status()
-    except Exception as exc:
-        raise RuntimeError(f"Cannot reach NWS API: {exc}") from exc
-    today = datetime.now(EASTERN_TZ).date()
-    times, temps = [], []
-    for feat in reversed(resp.json().get("features", [])):
-        props  = feat.get("properties", {})
-        temp_c = props.get("temperature", {}).get("value")
-        ts     = props.get("timestamp")
-        if temp_c is None or ts is None:
-            continue
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(EASTERN_TZ)
-        if dt.date() == today:
-            times.append(dt)
-            temps.append(c_to_f(temp_c))
-    return times, temps
+        today = datetime.now(EASTERN_TZ).date()
+        times, temps = [], []
+        for feat in reversed(resp.json().get("features", [])):
+            props  = feat.get("properties", {})
+            temp_c = props.get("temperature", {}).get("value")
+            ts     = props.get("timestamp")
+            if temp_c is None or ts is None:
+                continue
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(EASTERN_TZ)
+            if dt.date() == today:
+                times.append(dt)
+                temps.append(c_to_f(temp_c))
+        return times, temps
+    except Exception:
+        return [], []
 
 
 def fetch_forecast():
@@ -363,47 +394,45 @@ def fetch_metar_history():
 @app.route("/api/data")
 def get_data():
     try:
-        obs_times, obs_temps             = fetch_observations()
-        mh_times, mh_temps               = fetch_metar_history()
-        om_times, om_temps               = fetch_open_meteo()
-        metar_temp, metar_time, metar_dt = fetch_metar()
+        now_et     = datetime.now(EASTERN_TZ)
+        today_str  = now_et.strftime("%Y-%m-%d")
 
-        # Last resort: use most-recent history entry if both METAR fetches failed
-        if metar_temp is None and mh_times:
-            metar_dt   = mh_times[-1]
-            metar_temp = mh_temps[-1]
-            metar_time = metar_dt.strftime("%-I:%M %p ET")
-        fcst_times, fcst_temps, fcst_high = fetch_forecast()
+        # Run all fetches in parallel — cuts worst-case latency from ~85s to ~20s.
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            f_obs   = ex.submit(fetch_observations)
+            f_mh    = ex.submit(fetch_metar_history)
+            f_om    = ex.submit(fetch_open_meteo)
+            f_metar = ex.submit(fetch_metar)
+            f_fcst  = ex.submit(fetch_forecast)
+            obs_times, obs_temps             = f_obs.result()
+            mh_times, mh_temps               = f_mh.result()
+            om_times, om_temps               = f_om.result()
+            metar_temp, metar_time, metar_dt = f_metar.result()
+            fcst_times, fcst_temps, fcst_high = f_fcst.result()
 
-        now_et = datetime.now(EASTERN_TZ)
+        # Add every successful fetch into the persistent caches.
+        # This means a later API outage can't erase readings we already saw.
+        if obs_times:
+            _cache_add(_chart_cache, today_str, list(zip(obs_times, obs_temps)))
+        if mh_times:
+            _cache_add(_chart_cache, today_str, list(zip(mh_times, mh_temps)))
+            _cache_add(_metar_cache, today_str, list(zip(mh_times, mh_temps)))
+        if metar_temp is not None and metar_dt is not None and metar_dt.date() == now_et.date():
+            _cache_add(_chart_cache, today_str, [(metar_dt, metar_temp)])
+            _cache_add(_metar_cache, today_str, [(metar_dt, metar_temp)])
 
-        # Merge NWS obs + METAR history + live tgftp METAR.
-        # The live METAR from tgftp.weather.gov is the same feed WU uses and is
-        # the freshest available reading — inject it so cur_temp/day_high match WU.
-        # NOTE: fetch_latest_observation() (NWS /latest API) is intentionally omitted
-        # because it rounds to integer °C, losing tenth-degree precision, and its
-        # slightly-later timestamp causes it to win the dedup over the METAR.
-        metar_pair  = (
-            [(metar_dt, metar_temp)]
-            if metar_temp is not None and metar_dt is not None
-               and metar_dt.date() == now_et.date()
-            else []
-        )
-        combined = sorted(
-            [(t, v) for t, v in zip(obs_times, obs_temps)] +
-            [(t, v) for t, v in zip(mh_times, mh_temps)] +
-            metar_pair,
-            key=lambda x: x[0]
-        )
-        # Deduplicate: within 10 min keep the later reading
-        deduped = []
-        for t, v in combined:
-            if deduped and (t - deduped[-1][0]).total_seconds() < 600:
-                deduped[-1] = (t, v)
-            else:
-                deduped.append((t, v))
-        merged_times = [x[0] for x in deduped]
-        merged_temps = [x[1] for x in deduped]
+        # Chart data: use the full accumulated cache (never loses old readings).
+        cached_chart  = _cache_get(_chart_cache, today_str)
+        merged_times  = [x[0] for x in cached_chart]
+        merged_temps  = [x[1] for x in cached_chart]
+
+        # Last resort cur_temp: fall back to most-recent cached METAR reading.
+        if metar_temp is None:
+            cached_metar_pts = _cache_get(_metar_cache, today_str)
+            if cached_metar_pts:
+                metar_dt   = cached_metar_pts[-1][0]
+                metar_temp = cached_metar_pts[-1][1]
+                metar_time = metar_dt.strftime("%-I:%M %p ET")
 
         # Enriched trend dataset: KBOS obs + Open-Meteo 15-min model.
         # Used only for velocity/trend_confidence — not for day_high or cur_temp
@@ -417,11 +446,10 @@ def get_data():
 
         # cur_temp and day_high must come from METAR-only sources to match WU.
         # NWS observations use integer-°C rounding and can diverge from METAR.
-        wu_times = list(mh_times)
-        wu_temps = list(mh_temps)
-        if metar_temp is not None and metar_dt is not None and metar_dt.date() == now_et.date():
-            wu_times.append(metar_dt)
-            wu_temps.append(metar_temp)
+        # Use the accumulated METAR cache so day_high survives AVWX outages.
+        cached_metar_pts = _cache_get(_metar_cache, today_str)
+        wu_times = [x[0] for x in cached_metar_pts]
+        wu_temps = [x[1] for x in cached_metar_pts]
 
         cur_temp = metar_temp if metar_temp is not None else (merged_temps[-1] if merged_temps else None)
         day_high = max(wu_temps) if wu_temps else (max(merged_temps) if merged_temps else None)
