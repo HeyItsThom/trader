@@ -306,11 +306,12 @@ def get_data():
 
         vel_val = velocity(merged_times, merged_temps)
 
-        recent = merged_temps[-min(4, len(merged_temps)):] if merged_temps else []
-        delta  = (recent[-1] - recent[0]) if len(recent) >= 2 else 0
-        if delta > 1.0:
+        # Derive trend from 1-hour velocity so it always agrees with Rate of Change
+        if vel_val is None:
+            trend = "Steady"
+        elif vel_val > 0.5:
             trend = "Rising"
-        elif delta < -1.0:
+        elif vel_val < -0.5:
             trend = "Falling"
         else:
             trend = "Steady"

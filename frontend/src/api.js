@@ -266,13 +266,21 @@ export async function loadData() {
   const prediction = predictHigh(mergedTimes, mergedTemps, fcst.times, fcst.temps, nowEtProxy);
 
   const vel = velocity(mergedTimes, mergedTemps);
-  const velText = vel != null ? `${vel >= 0 ? "+" : ""}${vel.toFixed(1)}` : null;
 
-  const recent = mergedTemps.slice(-4);
-  const delta  = recent.length >= 2 ? recent[recent.length-1] - recent[0] : 0;
-  const trend  = delta > 1 ? "Rising" : delta < -1 ? "Falling" : "Steady";
+  // Derive trend from 1-hour velocity so it always agrees with Rate of Change
+  const trend = vel == null ? "Steady"
+    : vel >  0.5 ? "Rising"
+    : vel < -0.5 ? "Falling"
+    : "Steady";
 
-  const trendConf = trendConfidence(obs.times, obs.temps);
+  const trendConf = trendConfidence(mergedTimes, mergedTemps);
+
+  // Restore METAR match: compare last METAR reading vs latest NWS obs reading
+  const lastMetarTemp = metar.temps.length ? metar.temps[metar.temps.length - 1] : null;
+  const lastObsTemp   = obs.temps.length   ? obs.temps[obs.temps.length - 1]     : null;
+  const metarMatch = (lastMetarTemp != null && lastObsTemp != null)
+    ? (Math.abs(lastMetarTemp - lastObsTemp) < 2 ? "matches" : `Δ ${Math.abs(lastMetarTemp - lastObsTemp).toFixed(1)}°`)
+    : null;
 
   return {
     observed:      mergedTimes.map((t, i) => ({ time: new Date(t).toISOString(), temp: mergedTemps[i] })),
@@ -283,8 +291,8 @@ export async function loadData() {
     day_high:      dayHigh,
     fcst_high:     fcst.high,
     hi_time:       hiTime,
-    metar_temp:    metar.temps.length ? metar.temps[metar.temps.length-1] : null,
-    metar_match:   null, // no longer meaningful since merged
+    metar_temp:    lastMetarTemp,
+    metar_match:   metarMatch,
     prediction,
     velocity:      vel,
     trend,
