@@ -3,15 +3,24 @@
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+VENV="$ROOT/.venv"
 
-# Install Python deps if needed
-pip install flask flask-cors requests -q --break-system-packages --ignore-installed blinker 2>/dev/null || true
+# ── Python virtualenv + deps ──────────────────────────────────────────────────
+if [[ ! -d "$VENV" ]]; then
+  echo "→ Creating virtual environment..."
+  python3 -m venv "$VENV"
+fi
+source "$VENV/bin/activate"
+pip install -q --upgrade pip
+pip install -q flask flask-cors requests
+echo "→ Python deps ready"
 
-# Install Node deps if needed
+# ── Node deps ─────────────────────────────────────────────────────────────────
 (cd "$ROOT/frontend" && npm install --silent 2>/dev/null)
 
+# ── Launch ────────────────────────────────────────────────────────────────────
 echo "Starting Flask API on http://localhost:5050 ..."
-python3 "$ROOT/api.py" &
+python "$ROOT/api.py" &
 FLASK_PID=$!
 
 echo "Starting React dev server on http://localhost:5173 ..."

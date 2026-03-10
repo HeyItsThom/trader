@@ -179,8 +179,11 @@ def parse_metar_temp(raw: str):
 
 # ── Data fetchers ──────────────────────────────────────────────────────────────
 def fetch_observations():
-    resp  = requests.get(NWS_OBS_URL, headers=HEADERS, params={"limit": 150}, timeout=20)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(NWS_OBS_URL, headers=HEADERS, params={"limit": 150}, timeout=20)
+        resp.raise_for_status()
+    except Exception as exc:
+        raise RuntimeError(f"Cannot reach NWS API: {exc}") from exc
     today = datetime.now(EASTERN_TZ).date()
     times, temps = [], []
     for feat in reversed(resp.json().get("features", [])):
