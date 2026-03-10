@@ -292,11 +292,12 @@ export async function loadData() {
 
   const trendConf = trendConfidence(mergedTimes, mergedTemps);
 
-  // Restore METAR match: compare last METAR reading vs latest NWS obs reading
-  const lastMetarTemp = metar.temps.length ? metar.temps[metar.temps.length - 1] : null;
-  const lastObsTemp   = obs.temps.length   ? obs.temps[obs.temps.length - 1]     : null;
-  const metarMatch = (lastMetarTemp != null && lastObsTemp != null)
-    ? (Math.abs(lastMetarTemp - lastObsTemp) < 2 ? "matches" : `Δ ${Math.abs(lastMetarTemp - lastObsTemp).toFixed(1)}°`)
+  // METAR / WU display: prefer /latest (freshest), fall back to METAR history
+  const lastMetarTemp    = metar.temps.length ? metar.temps[metar.temps.length - 1] : null;
+  const metarDisplayTemp = latestObs?.temp ?? lastMetarTemp;
+  const lastObsTemp      = obs.temps.length  ? obs.temps[obs.temps.length - 1]      : null;
+  const metarMatch = (metarDisplayTemp != null && lastObsTemp != null)
+    ? (Math.abs(metarDisplayTemp - lastObsTemp) < 2 ? "matches" : `Δ ${Math.abs(metarDisplayTemp - lastObsTemp).toFixed(1)}°`)
     : null;
 
   return {
@@ -308,7 +309,7 @@ export async function loadData() {
     day_high:      dayHigh,
     fcst_high:     fcst.high,
     hi_time:       hiTime,
-    metar_temp:    lastMetarTemp,
+    metar_temp:    metarDisplayTemp,
     metar_match:   metarMatch,
     prediction,
     velocity:      vel,
