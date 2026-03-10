@@ -424,7 +424,7 @@ def get_data():
             except ValueError:
                 pass
 
-        prediction = predict_high(merged_times, merged_temps, fcst_times, fcst_temps, now_et)
+        prediction = predict_high(trend_times, trend_temps, fcst_times, fcst_temps, now_et)
 
         vel_val = velocity(trend_times, trend_temps)
 
