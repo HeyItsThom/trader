@@ -173,12 +173,13 @@ def parse_metar_temp(raw: str):
     lines      = raw.strip().splitlines()
     metar_line = lines[-1] if len(lines) >= 2 else raw.strip()
 
+    obs_dt       = None
     obs_time_str = None
     if len(lines) >= 2:
         try:
-            dt = datetime.strptime(lines[0].strip(), "%Y/%m/%d %H:%M")
-            dt_et = dt.replace(tzinfo=zoneinfo.ZoneInfo("UTC")).astimezone(EASTERN_TZ)
-            obs_time_str = dt_et.strftime("%I:%M %p ET").lstrip("0")
+            dt    = datetime.strptime(lines[0].strip(), "%Y/%m/%d %H:%M")
+            obs_dt = dt.replace(tzinfo=zoneinfo.ZoneInfo("UTC")).astimezone(EASTERN_TZ)
+            obs_time_str = obs_dt.strftime("%I:%M %p ET").lstrip("0")
         except Exception:
             pass
 
@@ -186,16 +187,16 @@ def parse_metar_temp(raw: str):
     if t_match:
         sign   = -1 if t_match.group(1) == "1" else 1
         temp_c = sign * int(t_match.group(2)) / 10.0
-        return c_to_f(temp_c), obs_time_str
+        return c_to_f(temp_c), obs_time_str, obs_dt
 
     td_match = re.search(r"\b(M?\d{2})/(M?\d{2})\b", metar_line)
     if td_match:
         raw_t  = td_match.group(1)
         sign   = -1 if raw_t.startswith("M") else 1
         temp_c = sign * int(raw_t.replace("M", ""))
-        return c_to_f(temp_c), obs_time_str
+        return c_to_f(temp_c), obs_time_str, obs_dt
 
-    return None, obs_time_str
+    return None, obs_time_str, obs_dt
 
 
 # ── Data fetchers ──────────────────────────────────────────────────────────────
@@ -267,7 +268,7 @@ def fetch_metar():
         resp.raise_for_status()
         return parse_metar_temp(resp.text)
     except Exception:
-        return None, None
+        return None, None, None
 
 
 def fetch_metar_history():
@@ -305,20 +306,28 @@ def fetch_metar_history():
 def get_data():
     try:
         obs_times, obs_temps     = fetch_observations()
-        metar_temp, metar_time   = fetch_metar()
+        metar_temp, metar_time, metar_dt = fetch_metar()
         mh_times, mh_temps       = fetch_metar_history()
         fcst_times, fcst_temps, fcst_high = fetch_forecast()
         latest_obs_time, latest_obs_temp  = fetch_latest_observation()
 
         now_et = datetime.now(EASTERN_TZ)
 
-        # Merge NWS obs + METAR history + latest NWS observation into a unified series.
-        # The /latest endpoint is fresher than the list and helps close the gap with WU.
+        # Merge NWS obs + METAR history + latest NWS obs + live tgftp METAR.
+        # The live METAR from tgftp.weather.gov is the same feed WU uses and is
+        # the freshest available reading — inject it so day_high reflects it.
         latest_pair = [(latest_obs_time, latest_obs_temp)] if latest_obs_time else []
+        metar_pair  = (
+            [(metar_dt, metar_temp)]
+            if metar_temp is not None and metar_dt is not None
+               and metar_dt.date() == now_et.date()
+            else []
+        )
         combined = sorted(
             [(t, v) for t, v in zip(obs_times, obs_temps)] +
             [(t, v) for t, v in zip(mh_times, mh_temps)] +
-            latest_pair,
+            latest_pair +
+            metar_pair,
             key=lambda x: x[0]
         )
         # Deduplicate: within 10 min keep the later reading
