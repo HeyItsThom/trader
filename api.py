@@ -295,36 +295,56 @@ def fetch_forecast():
         return [], [], None
 
 
+def _fetch_metar_tgftp():
+    """tgftp.weather.gov — NWS public METAR feed. Returns (temp_f, time_str, dt, 'tgftp')."""
+    resp = requests.get(METAR_URL, headers=HEADERS, timeout=10)
+    resp.raise_for_status()
+    temp_f, time_str, dt = parse_metar_temp(resp.text)
+    if temp_f is None:
+        return None
+    return temp_f, time_str, dt, "tgftp"
+
+
+def _fetch_metar_avwx():
+    """aviationweather.gov — FAA operational METAR feed. Returns (temp_f, time_str, dt, 'avwx')."""
+    resp = requests.get(
+        AVWX_METAR_URL,
+        params={"ids": STATION_ID, "format": "json", "hours": 1},
+        headers=HEADERS, timeout=10,
+    )
+    resp.raise_for_status()
+    obs_list = resp.json()
+    if not obs_list:
+        return None
+    obs    = max(obs_list, key=lambda x: x.get("obsTime", 0))
+    temp_c = obs.get("temp")
+    obs_ts = obs.get("obsTime")
+    if temp_c is None or obs_ts is None:
+        return None
+    dt           = datetime.fromtimestamp(obs_ts, tz=zoneinfo.ZoneInfo("UTC")).astimezone(EASTERN_TZ)
+    obs_time_str = dt.strftime("%-I:%M %p ET")
+    return c_to_f(temp_c), obs_time_str, dt, "avwx"
+
+
 def fetch_metar():
-    # Primary: tgftp.weather.gov raw METAR — same pipeline WU uses, updates within ~1 min
-    try:
-        resp = requests.get(METAR_URL, headers=HEADERS, timeout=10)
-        resp.raise_for_status()
-        result = parse_metar_temp(resp.text)
-        if result[0] is not None:
-            return result
-    except Exception:
-        pass
-    # Fallback: aviationweather.gov JSON API
-    try:
-        resp = requests.get(
-            AVWX_METAR_URL,
-            params={"ids": STATION_ID, "format": "json", "hours": 1},
-            headers=HEADERS, timeout=10,
-        )
-        resp.raise_for_status()
-        obs_list = resp.json()
-        if obs_list:
-            obs    = max(obs_list, key=lambda x: x.get("obsTime", 0))
-            temp_c = obs.get("temp")
-            obs_ts = obs.get("obsTime")
-            if temp_c is not None and obs_ts is not None:
-                dt           = datetime.fromtimestamp(obs_ts, tz=zoneinfo.ZoneInfo("UTC")).astimezone(EASTERN_TZ)
-                obs_time_str = dt.strftime("%-I:%M %p ET")
-                return c_to_f(temp_c), obs_time_str, dt
-    except Exception:
-        pass
-    return None, None, None
+    """Fetch current METAR from both sources in parallel; return whichever is newer."""
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_tgftp = ex.submit(_fetch_metar_tgftp)
+        f_avwx  = ex.submit(_fetch_metar_avwx)
+        candidates = []
+        for f in (f_tgftp, f_avwx):
+            try:
+                result = f.result()
+                if result is not None:
+                    candidates.append(result)
+            except Exception:
+                pass
+
+    if not candidates:
+        return None, None, None, None
+    # Pick the reading with the most recent observation timestamp
+    best = max(candidates, key=lambda x: x[2])
+    return best[0], best[1], best[2], best[3]   # temp_f, time_str, dt, source
 
 
 def fetch_open_meteo():
@@ -407,7 +427,7 @@ def get_data():
             obs_times, obs_temps             = f_obs.result()
             mh_times, mh_temps               = f_mh.result()
             om_times, om_temps               = f_om.result()
-            metar_temp, metar_time, metar_dt = f_metar.result()
+            metar_temp, metar_time, metar_dt, metar_source = f_metar.result()
             fcst_times, fcst_temps, fcst_high = f_fcst.result()
 
         # Add every successful fetch into the persistent caches.
@@ -430,9 +450,10 @@ def get_data():
         if metar_temp is None:
             cached_metar_pts = _cache_get(_metar_cache, today_str)
             if cached_metar_pts:
-                metar_dt   = cached_metar_pts[-1][0]
-                metar_temp = cached_metar_pts[-1][1]
-                metar_time = metar_dt.strftime("%-I:%M %p ET")
+                metar_dt     = cached_metar_pts[-1][0]
+                metar_temp   = cached_metar_pts[-1][1]
+                metar_time   = metar_dt.strftime("%-I:%M %p ET")
+                metar_source = "cache"
 
         # Enriched trend dataset: KBOS obs + Open-Meteo 15-min model.
         # Used only for velocity/trend_confidence — not for day_high or cur_temp
@@ -510,6 +531,7 @@ def get_data():
             "hi_time": hi_time,
             "metar_temp": metar_temp,
             "metar_time": metar_time,
+            "metar_source": metar_source,
             "metar_match": metar_match,
             "prediction": prediction,
             "velocity": vel_val,
