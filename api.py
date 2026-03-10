@@ -263,12 +263,33 @@ def fetch_forecast():
 
 
 def fetch_metar():
+    # Primary: aviationweather.gov JSON API (more reliable on Vercel than tgftp)
     try:
-        resp   = requests.get(METAR_URL, headers=HEADERS, timeout=10)
+        resp = requests.get(
+            AVWX_METAR_URL,
+            params={"ids": STATION_ID, "format": "json", "hours": 1},
+            headers=HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        obs_list = resp.json()
+        if obs_list:
+            obs    = max(obs_list, key=lambda x: x.get("obsTime", 0))
+            temp_c = obs.get("temp")
+            obs_ts = obs.get("obsTime")
+            if temp_c is not None and obs_ts is not None:
+                dt           = datetime.fromtimestamp(obs_ts, tz=zoneinfo.ZoneInfo("UTC")).astimezone(EASTERN_TZ)
+                obs_time_str = dt.strftime("%-I:%M %p ET")
+                return c_to_f(temp_c), obs_time_str, dt
+    except Exception:
+        pass
+    # Fallback: tgftp.weather.gov raw text METAR
+    try:
+        resp = requests.get(METAR_URL, headers=HEADERS, timeout=10)
         resp.raise_for_status()
         return parse_metar_temp(resp.text)
     except Exception:
-        return None, None, None
+        pass
+    return None, None, None
 
 
 def fetch_metar_history():
@@ -306,8 +327,14 @@ def fetch_metar_history():
 def get_data():
     try:
         obs_times, obs_temps     = fetch_observations()
+        mh_times, mh_temps               = fetch_metar_history()
         metar_temp, metar_time, metar_dt = fetch_metar()
-        mh_times, mh_temps       = fetch_metar_history()
+
+        # Last resort: use most-recent history entry if both METAR fetches failed
+        if metar_temp is None and mh_times:
+            metar_dt   = mh_times[-1]
+            metar_temp = mh_temps[-1]
+            metar_time = metar_dt.strftime("%-I:%M %p ET")
         fcst_times, fcst_temps, fcst_high = fetch_forecast()
         latest_obs_time, latest_obs_temp  = fetch_latest_observation()
 
