@@ -5,6 +5,7 @@ const C = {
   gold: "#d29922",
   sub:  "#8b949e",
   wht:  "#e6edf3",
+  purp: "#bc8cff",
 };
 
 function Sig({ label, value, color }) {
@@ -20,8 +21,12 @@ export default function SignalStrip({ data }) {
   if (!data) {
     return (
       <div className="signals">
+        <div className="sig-cell sig-cell--trend">
+          <div className="sig-label">Trend</div>
+          <div className="sig-trend-icon">─</div>
+          <div className="sig-trend-conf" style={{ color: C.sub }}>-- confidence</div>
+        </div>
         <Sig label="Rate of Change" value="--" />
-        <Sig label="Trend"          value="─"  />
         <Sig label="Peak Window"    value="--" />
         <Sig label="High Set At"    value="--" />
         <Sig label="METAR / WU Now" value="--" />
@@ -29,7 +34,7 @@ export default function SignalStrip({ data }) {
     );
   }
 
-  const { velocity, trend, peak, hi_time, metar_temp, metar_match } = data;
+  const { velocity, trend, trend_conf, trend_conf_reason, peak, hi_time, metar_temp, metar_match } = data;
 
   const velColor = velocity == null ? C.sub
     : velocity > 0.5 ? C.red
@@ -43,6 +48,10 @@ export default function SignalStrip({ data }) {
   const trendColor = trend === "Rising" ? C.red : trend === "Falling" ? C.blue : C.sub;
   const trendIcon  = trend === "Rising" ? "▲" : trend === "Falling" ? "▼" : "─";
 
+  const confColor = trend_conf === "High" ? C.grn
+    : trend_conf === "Medium" ? C.gold
+    : C.sub;
+
   const peakColor = peak?.open ? C.grn : C.sub;
 
   const metatText = metar_temp != null
@@ -54,11 +63,22 @@ export default function SignalStrip({ data }) {
 
   return (
     <div className="signals">
-      <Sig label="Rate of Change" value={velText}                color={velColor}  />
-      <Sig label="Trend"          value={`${trend}  ${trendIcon}`} color={trendColor} />
-      <Sig label="Peak Window"    value={peak?.label ?? "--"}     color={peakColor}  />
-      <Sig label="High Set At"    value={hi_time ?? "--"}         />
-      <Sig label="METAR / WU Now" value={metatText}               color={metarColor} />
+      {/* Trend — enlarged cell spanning 2 columns */}
+      <div className="sig-cell sig-cell--trend">
+        <div className="sig-label">Trend</div>
+        <div className="sig-trend-icon" style={{ color: trendColor }}>
+          {trendIcon} {trend}
+        </div>
+        <div className="sig-trend-conf" style={{ color: confColor }}>
+          {trend_conf ?? "Low"} confidence
+          {trend_conf_reason ? <span style={{ color: C.sub }}> · {trend_conf_reason}</span> : null}
+        </div>
+      </div>
+
+      <Sig label="Rate of Change" value={velText}              color={velColor}   />
+      <Sig label="Peak Window"    value={peak?.label ?? "--"}  color={peakColor}  />
+      <Sig label="High Set At"    value={hi_time ?? "--"}                         />
+      <Sig label="METAR / WU Now" value={metatText}            color={metarColor} />
     </div>
   );
 }

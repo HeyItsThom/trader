@@ -33,7 +33,8 @@ function ChartTooltip({ active, payload }) {
   // Pull the underlying data point; fall back to forecast entry for future-only rows
   const obsEntry  = payload.find(p => p.dataKey === "obs");
   const fcstEntry = payload.find(p => p.dataKey === "fcst");
-  const entry = obsEntry ?? fcstEntry;
+  const predEntry = payload.find(p => p.dataKey === "point");
+  const entry = obsEntry ?? fcstEntry ?? predEntry;
   if (!entry) return null;
 
   const d = entry.payload; // the full data row
@@ -58,8 +59,27 @@ function ChartTooltip({ active, payload }) {
           </span>
         </div>
       )}
-      {/* Only show prediction/confidence for the most recent point */}
-      {d.isLatest && d.predPoint != null && (
+      {/* Prediction snapshot (from history or current) */}
+      {d.point != null && (
+        <>
+          <div className="chart-tooltip-row">
+            <span className="chart-tooltip-label">Pred at this time</span>
+            <span className="chart-tooltip-value" style={{ color: C.purp }}>
+              {d.point.toFixed(1)}°F ±{((d.high - d.low) / 2).toFixed(1)}°
+            </span>
+          </div>
+          {d.confidence && (
+            <div className="chart-tooltip-row">
+              <span className="chart-tooltip-label">Confidence</span>
+              <span className="chart-tooltip-value" style={{ color: C.purp }}>
+                {d.confidence}
+              </span>
+            </div>
+          )}
+        </>
+      )}
+      {/* Current prediction shown on latest obs point */}
+      {d.isLatest && d.predPoint != null && !d.point && (
         <>
           <div className="chart-tooltip-row">
             <span className="chart-tooltip-label">Pred High</span>
@@ -79,7 +99,7 @@ function ChartTooltip({ active, payload }) {
   );
 }
 
-export default function TempChart({ data, thresholds = [] }) {
+export default function TempChart({ data, thresholds = [], predHistory = [] }) {
   if (!data) return null;
 
   const { observed = [], forecast = [], prediction, day_high, fcst_high, now } = data;
@@ -283,6 +303,22 @@ export default function TempChart({ data, thresholds = [] }) {
             name="NWS Forecast"
           />
 
+          {/* Prediction tracking line (how the prediction evolved throughout the day) */}
+          {predHistory.length > 1 && (
+            <Line
+              data={predHistory}
+              type="monotone"
+              dataKey="point"
+              stroke={C.purp}
+              strokeWidth={2}
+              dot={{ r: 3, fill: C.purp, strokeWidth: 0 }}
+              activeDot={{ r: 5, fill: C.purp, stroke: C.wht, strokeWidth: 1.5 }}
+              isAnimationActive={false}
+              name="Pred Track"
+              opacity={0.85}
+            />
+          )}
+
           {/* Observed temperature line */}
           <Line
             data={obsRows}
@@ -316,7 +352,13 @@ export default function TempChart({ data, thresholds = [] }) {
         {prediction && (
           <div className="legend-item">
             <div className="legend-dot" style={{ background: C.purp }} />
-            Prediction ±{prediction.spread.toFixed(1)}° ({prediction.confidence})
+            Pred High {prediction.point.toFixed(1)}° ±{prediction.spread.toFixed(1)}° ({prediction.confidence})
+          </div>
+        )}
+        {predHistory.length > 1 && (
+          <div className="legend-item">
+            <div className="legend-dot" style={{ background: C.purp, opacity: 0.5 }} />
+            Pred Track ({predHistory.length} pts)
           </div>
         )}
         <div className="legend-item" style={{ marginLeft: "auto", color: C.gold, fontSize: 10 }}>
