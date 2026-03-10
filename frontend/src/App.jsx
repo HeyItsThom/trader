@@ -5,7 +5,6 @@ import StatCards         from "./components/StatCards";
 import SignalStrip       from "./components/SignalStrip";
 import TempChart         from "./components/TempChart";
 import BetsPanel         from "./components/BetsPanel";
-import ProbabilityLadder from "./components/ProbabilityLadder";
 
 const REFRESH_MS = 60_000;
 
@@ -149,9 +148,7 @@ export default function App() {
 
       <BetsPanel data={data} thresholds={thresholds} setThresholds={setThresholds} />
 
-      {data && <ProbabilityLadder data={data} thresholds={thresholds} />}
-
-      <div className="footer">
+<div className="footer">
         <span>Data: NWS KBOS = WU · METAR = WU current conditions · Refreshes every 60 s</span>
         <span>Designed &amp; developed by Thom Brabant // Claude</span>
       </div>

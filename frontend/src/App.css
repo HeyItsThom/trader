@@ -187,31 +187,6 @@
 .bet-status { font-size: 13px; font-weight: 700; }
 .bet-detail { font-size: 11px; color: var(--sub); }
 
-/* ── Probability ladder ── */
-.prob-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 4px 0;
-}
-.prob-header h2 { font-size: 12px; font-weight: 700; color: var(--wht); }
-.prob-header span { font-size: 10px; color: var(--sub); }
-
-.prob-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-
-.prob-chip {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  border-radius: 6px;
-  padding: 4px 8px;
-  min-width: 44px;
-}
-.prob-chip-deg  { font-size: 11px; font-weight: 600; }
-.prob-chip-pct  { font-size: 12px; font-weight: 700; }
-.prob-chip.is-bet { outline: 2px solid var(--wht); }
-
 /* ── Footer ── */
 .footer {
   display: flex;
