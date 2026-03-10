@@ -274,25 +274,39 @@ def get_data():
 
         now_et = datetime.now(EASTERN_TZ)
 
-        all_highs = list(obs_temps) + list(mh_temps)
-        day_high  = max(all_highs) if all_highs else (max(obs_temps) if obs_temps else None)
+        # Merge NWS obs + METAR history into a unified time-sorted series.
+        # METAR updates more frequently (every ~20-30 min) and matches WU.
+        combined = sorted(
+            [(t, v) for t, v in zip(obs_times, obs_temps)] +
+            [(t, v) for t, v in zip(mh_times, mh_temps)],
+            key=lambda x: x[0]
+        )
+        # Deduplicate: within 10 min keep the later reading
+        deduped = []
+        for t, v in combined:
+            if deduped and (t - deduped[-1][0]).total_seconds() < 600:
+                deduped[-1] = (t, v)
+            else:
+                deduped.append((t, v))
+        merged_times = [x[0] for x in deduped]
+        merged_temps = [x[1] for x in deduped]
+
+        day_high = max(merged_temps) if merged_temps else None
 
         # High set time
         hi_time = "--"
-        if day_high is not None and obs_temps:
+        if day_high is not None and merged_temps:
             try:
-                hi_idx  = obs_temps.index(day_high)
-                hi_time = obs_times[hi_idx].strftime("%I:%M %p").lstrip("0")
+                hi_idx  = merged_temps.index(day_high)
+                hi_time = merged_times[hi_idx].strftime("%I:%M %p").lstrip("0")
             except ValueError:
-                if day_high in mh_temps:
-                    mh_idx  = mh_temps.index(day_high)
-                    hi_time = mh_times[mh_idx].strftime("%I:%M %p").lstrip("0")
+                pass
 
-        prediction = predict_high(obs_times, obs_temps, fcst_times, fcst_temps, now_et)
+        prediction = predict_high(merged_times, merged_temps, fcst_times, fcst_temps, now_et)
 
-        vel_val = velocity(obs_times, obs_temps)
+        vel_val = velocity(merged_times, merged_temps)
 
-        recent = obs_temps[-min(4, len(obs_temps)):] if obs_temps else []
+        recent = merged_temps[-min(4, len(merged_temps)):] if merged_temps else []
         delta  = (recent[-1] - recent[0]) if len(recent) >= 2 else 0
         if delta > 1.0:
             trend = "Rising"
@@ -311,7 +325,7 @@ def get_data():
         return jsonify({
             "observed": [
                 {"time": t.isoformat(), "temp": v}
-                for t, v in zip(obs_times, obs_temps)
+                for t, v in zip(merged_times, merged_temps)
             ],
             "forecast": [
                 {"time": t.isoformat(), "temp": v}
@@ -322,7 +336,7 @@ def get_data():
                 for t, v in zip(mh_times, mh_temps)
             ],
             "now": now_et.isoformat(),
-            "cur_temp": obs_temps[-1] if obs_temps else None,
+            "cur_temp": merged_temps[-1] if merged_temps else None,
             "day_high": day_high,
             "fcst_high": fcst_high,
             "hi_time": hi_time,
@@ -333,7 +347,7 @@ def get_data():
             "velocity": vel_val,
             "trend": trend,
             "peak": pk,
-            "obs_count": len(obs_temps),
+            "obs_count": len(merged_temps),
         })
 
     except Exception as exc:

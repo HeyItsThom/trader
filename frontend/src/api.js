@@ -189,22 +189,36 @@ export async function loadData() {
   const now    = new Date();
   const nowEt  = now; // JS Date is fine for local computation; displayed in ET via Intl
 
-  const allHighs = [...obs.temps, ...metar.temps];
+  // Merge NWS obs + METAR history into a unified, time-sorted observation series.
+  // METAR is updated more frequently and is what WU displays; NWS obs can lag 30-60 min.
+  const combined = [
+    ...obs.times.map((t, i) => ({ t, temp: obs.temps[i] })),
+    ...metar.times.map((t, i) => ({ t, temp: metar.temps[i] })),
+  ].sort((a, b) => a.t - b.t);
+
+  // Deduplicate: if two readings are within 10 min, keep the later one
+  const deduped = [];
+  for (const entry of combined) {
+    const last = deduped[deduped.length - 1];
+    if (last && entry.t - last.t < 10 * 60 * 1000) {
+      deduped[deduped.length - 1] = entry;
+    } else {
+      deduped.push(entry);
+    }
+  }
+  const mergedTimes = deduped.map(e => e.t);
+  const mergedTemps = deduped.map(e => e.temp);
+
+  const allHighs = mergedTemps;
   const dayHigh  = allHighs.length ? Math.max(...allHighs) : null;
 
-  // High set time
+  // High set time (search merged series)
   let hiTime = "--";
   if (dayHigh != null) {
-    const idx = obs.temps.indexOf(dayHigh);
+    const idx = mergedTemps.indexOf(dayHigh);
     if (idx !== -1) {
-      hiTime = new Date(obs.times[idx]).toLocaleTimeString("en-US",
+      hiTime = new Date(mergedTimes[idx]).toLocaleTimeString("en-US",
         { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
-    } else {
-      const mIdx = metar.temps.indexOf(dayHigh);
-      if (mIdx !== -1) {
-        hiTime = new Date(metar.times[mIdx]).toLocaleTimeString("en-US",
-          { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
-      }
     }
   }
 
@@ -218,33 +232,31 @@ export async function loadData() {
   const nowEtProxy = { getHours: () => hr, getMinutes: () => mn,
                        getMonth: () => mo - 1, toDateString: () => new Date(yr, mo-1, dy).toDateString() };
 
-  const prediction = predictHigh(obs.times, obs.temps, fcst.times, fcst.temps, nowEtProxy);
+  // Use merged series for prediction (includes latest METAR readings)
+  const prediction = predictHigh(mergedTimes, mergedTemps, fcst.times, fcst.temps, nowEtProxy);
 
-  const vel = velocity(obs.times, obs.temps);
+  const vel = velocity(mergedTimes, mergedTemps);
   const velText = vel != null ? `${vel >= 0 ? "+" : ""}${vel.toFixed(1)}` : null;
 
-  const recent = obs.temps.slice(-4);
+  const recent = mergedTemps.slice(-4);
   const delta  = recent.length >= 2 ? recent[recent.length-1] - recent[0] : 0;
   const trend  = delta > 1 ? "Rising" : delta < -1 ? "Falling" : "Steady";
 
   return {
-    observed:      obs.times.map((t, i) => ({ time: new Date(t).toISOString(), temp: obs.temps[i] })),
+    observed:      mergedTimes.map((t, i) => ({ time: new Date(t).toISOString(), temp: mergedTemps[i] })),
     forecast:      fcst.times.map((t, i) => ({ time: new Date(t).toISOString(), temp: fcst.temps[i] })),
     metar_history: metar.times.map((t, i) => ({ time: new Date(t).toISOString(), temp: metar.temps[i] })),
     now:           now.toISOString(),
-    cur_temp:      obs.temps.length ? obs.temps[obs.temps.length-1] : null,
+    cur_temp:      mergedTemps.length ? mergedTemps[mergedTemps.length-1] : null,
     day_high:      dayHigh,
     fcst_high:     fcst.high,
     hi_time:       hiTime,
     metar_temp:    metar.temps.length ? metar.temps[metar.temps.length-1] : null,
-    metar_match:   (obs.temps.length && metar.temps.length)
-                     ? Math.abs(metar.temps[metar.temps.length-1] - obs.temps[obs.temps.length-1]) < 2
-                       ? "matches" : `Δ ${Math.abs(metar.temps[metar.temps.length-1] - obs.temps[obs.temps.length-1]).toFixed(1)}°`
-                     : null,
+    metar_match:   null, // no longer meaningful since merged
     prediction,
     velocity:      vel,
     trend,
     peak:          peakStatus(nowEtProxy),
-    obs_count:     obs.temps.length,
+    obs_count:     mergedTemps.length,
   };
 }

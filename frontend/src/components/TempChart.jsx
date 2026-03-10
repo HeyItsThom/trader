@@ -30,13 +30,13 @@ function fmtTick(ts) {
 function ChartTooltip({ active, payload }) {
   if (!active || !payload || !payload.length) return null;
 
-  // Pull the underlying data point; fall back to forecast entry for future-only rows
-  const obsEntry  = payload.find(p => p.dataKey === "obs");
-  const fcstEntry = payload.find(p => p.dataKey === "fcst");
-  const entry = obsEntry ?? fcstEntry;
+  const obsEntry      = payload.find(p => p.dataKey === "obs");
+  const fcstEntry     = payload.find(p => p.dataKey === "fcst");
+  const predHistEntry = payload.find(p => p.dataKey === "predHistPoint");
+  const entry = obsEntry ?? fcstEntry ?? predHistEntry;
   if (!entry) return null;
 
-  const d = entry.payload; // the full data row
+  const d = entry.payload;
   const timeStr = format(new Date(d.time), "h:mm a 'ET'");
 
   return (
@@ -58,7 +58,24 @@ function ChartTooltip({ active, payload }) {
           </span>
         </div>
       )}
-      {/* Only show prediction/confidence for the most recent point */}
+      {/* Prediction history snapshot */}
+      {predHistEntry && d.predHistPoint != null && (
+        <>
+          <div className="chart-tooltip-row">
+            <span className="chart-tooltip-label">Pred High (then)</span>
+            <span className="chart-tooltip-value" style={{ color: C.purp }}>
+              {d.predHistPoint.toFixed(1)}°F ±{d.predHistSpread?.toFixed(1)}°
+            </span>
+          </div>
+          <div className="chart-tooltip-row">
+            <span className="chart-tooltip-label">Confidence</span>
+            <span className="chart-tooltip-value" style={{ color: C.purp }}>
+              {d.predHistConf}
+            </span>
+          </div>
+        </>
+      )}
+      {/* Current prediction on latest observed point */}
       {d.isLatest && d.predPoint != null && (
         <>
           <div className="chart-tooltip-row">
@@ -79,7 +96,7 @@ function ChartTooltip({ active, payload }) {
   );
 }
 
-export default function TempChart({ data, thresholds = [] }) {
+export default function TempChart({ data, thresholds = [], predHistory = [] }) {
   if (!data) return null;
 
   const { observed = [], forecast = [], prediction, day_high, fcst_high, now } = data;
@@ -258,6 +275,37 @@ export default function TempChart({ data, thresholds = [] }) {
             stroke={C.wht} strokeWidth={0.7} opacity={0.25} strokeDasharray="3 4"
           />
 
+          {/* Prediction history band (uncertainty range over time) */}
+          {predHistory.length > 1 && (
+            <Area
+              data={predHistory}
+              type="monotone"
+              dataKey="predHistHigh"
+              stroke="none"
+              fill={C.purp}
+              fillOpacity={0.07}
+              isAnimationActive={false}
+              legendType="none"
+              connectNulls
+            />
+          )}
+
+          {/* Prediction history point line */}
+          {predHistory.length > 1 && (
+            <Line
+              data={predHistory}
+              type="monotone"
+              dataKey="predHistPoint"
+              stroke={C.purp}
+              strokeWidth={1.5}
+              strokeDasharray="3 2"
+              dot={false}
+              activeDot={{ r: 4, fill: C.purp, stroke: C.wht, strokeWidth: 1 }}
+              isAnimationActive={false}
+              name="Pred High (history)"
+            />
+          )}
+
           {/* Fill under observed temps */}
           <Area
             data={obsRows}
@@ -317,6 +365,12 @@ export default function TempChart({ data, thresholds = [] }) {
           <div className="legend-item">
             <div className="legend-dot" style={{ background: C.purp }} />
             Prediction ±{prediction.spread.toFixed(1)}° ({prediction.confidence})
+          </div>
+        )}
+        {predHistory.length > 1 && (
+          <div className="legend-item">
+            <div className="legend-dot" style={{ background: C.purp, opacity: 0.5, borderRadius: 2 }} />
+            Pred High history
           </div>
         )}
         <div className="legend-item" style={{ marginLeft: "auto", color: C.gold, fontSize: 10 }}>

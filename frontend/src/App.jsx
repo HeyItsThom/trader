@@ -7,8 +7,24 @@ import TempChart         from "./components/TempChart";
 import BetsPanel         from "./components/BetsPanel";
 import ProbabilityLadder from "./components/ProbabilityLadder";
 
-const REFRESH_MS    = 60_000;
-const DEFAULT_THRESH = [41, 42];
+const REFRESH_MS = 60_000;
+
+// Prediction history: keyed by today's date in ET so it auto-clears each day
+const TODAY_KEY = `predHistory_${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })}`;
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(TODAY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function loadThresholds() {
+  try {
+    const raw = localStorage.getItem("thresholds");
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
 
 function useClock() {
   const [now, setNow] = useState(new Date());
@@ -27,11 +43,12 @@ function fmtClock(d) {
 }
 
 export default function App() {
-  const [data,       setData]       = useState(null);
-  const [status,     setStatus]     = useState({ text: "Loading…", color: "#8b949e" });
-  const [countdown,  setCountdown]  = useState(REFRESH_MS / 1000);
-  const [thresholds, setThresholds] = useState(DEFAULT_THRESH);
-  const [error,      setError]      = useState(null);
+  const [data,        setData]        = useState(null);
+  const [status,      setStatus]      = useState({ text: "Loading…", color: "#8b949e" });
+  const [countdown,   setCountdown]   = useState(REFRESH_MS / 1000);
+  const [thresholds,  setThresholds]  = useState(loadThresholds);
+  const [predHistory, setPredHistory] = useState(loadHistory);
+  const [error,       setError]       = useState(null);
   const timerRef = useRef(null);
   const countRef = useRef(null);
   const clock    = useClock();
@@ -47,6 +64,27 @@ export default function App() {
         hour12: true, timeZone: "America/New_York",
       });
       setStatus({ text: `Updated ${ts} ET  ·  ${json.obs_count} obs today`, color: "#3fb950" });
+
+      // Accumulate prediction history (one snapshot per refresh)
+      if (json.prediction) {
+        const newEntry = {
+          time:            Date.now(),
+          predHistPoint:   json.prediction.point,
+          predHistHigh:    json.prediction.high,
+          predHistLow:     json.prediction.low,
+          predHistSpread:  json.prediction.spread,
+          predHistConf:    json.prediction.confidence,
+        };
+        setPredHistory(prev => {
+          const last = prev[prev.length - 1];
+          // Within 2 min of last entry → update in place (handles manual refreshes)
+          const updated = (last && Math.abs(last.time - newEntry.time) < 2 * 60 * 1000)
+            ? [...prev.slice(0, -1), newEntry]
+            : [...prev, newEntry];
+          localStorage.setItem(TODAY_KEY, JSON.stringify(updated));
+          return updated;
+        });
+      }
     } catch (e) {
       setError(e.message);
       setStatus({ text: `⚠  ${e.message}`, color: "#ff7b72" });
@@ -55,6 +93,11 @@ export default function App() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Persist thresholds whenever they change
+  useEffect(() => {
+    localStorage.setItem("thresholds", JSON.stringify(thresholds));
+  }, [thresholds]);
 
   useEffect(() => {
     timerRef.current = setInterval(fetchData, REFRESH_MS);
@@ -99,7 +142,7 @@ export default function App() {
       {error && !data && (
         <div className="error">{error}</div>
       )}
-      {data && <TempChart data={data} thresholds={thresholds} />}
+      {data && <TempChart data={data} thresholds={thresholds} predHistory={predHistory} />}
 
       <BetsPanel data={data} thresholds={thresholds} setThresholds={setThresholds} />
 
