@@ -413,14 +413,23 @@ def get_data():
         trend_times = [x[0] for x in trend_all]
         trend_temps = [x[1] for x in trend_all]
 
-        day_high = max(merged_temps) if merged_temps else None
+        # cur_temp and day_high must come from METAR-only sources to match WU.
+        # NWS observations use integer-°C rounding and can diverge from METAR.
+        wu_times = list(mh_times)
+        wu_temps = list(mh_temps)
+        if metar_temp is not None and metar_dt is not None and metar_dt.date() == now_et.date():
+            wu_times.append(metar_dt)
+            wu_temps.append(metar_temp)
+
+        cur_temp = metar_temp if metar_temp is not None else (merged_temps[-1] if merged_temps else None)
+        day_high = max(wu_temps) if wu_temps else (max(merged_temps) if merged_temps else None)
 
         # High set time
         hi_time = "--"
-        if day_high is not None and merged_temps:
+        if day_high is not None and wu_temps:
             try:
-                hi_idx  = merged_temps.index(day_high)
-                hi_time = merged_times[hi_idx].strftime("%I:%M %p").lstrip("0")
+                hi_idx  = wu_temps.index(day_high)
+                hi_time = wu_times[hi_idx].strftime("%I:%M %p").lstrip("0")
             except ValueError:
                 pass
 
@@ -465,7 +474,7 @@ def get_data():
                 for t, v in zip(om_times, om_temps)
             ],
             "now": now_et.isoformat(),
-            "cur_temp": merged_temps[-1] if merged_temps else None,
+            "cur_temp": cur_temp,
             "day_high": day_high,
             "fcst_high": fcst_high,
             "hi_time": hi_time,
