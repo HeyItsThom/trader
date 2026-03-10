@@ -27,26 +27,29 @@ function fmtTick(ts) {
 }
 
 // Custom tooltip — shows historically correct data for each point
-function ChartTooltip({ active, payload, label }) {
+function ChartTooltip({ active, payload }) {
   if (!active || !payload || !payload.length) return null;
 
-  // Pull the underlying data point from the observed line payload
-  const obsEntry = payload.find(p => p.dataKey === "obs");
-  if (!obsEntry) return null;
+  // Pull the underlying data point; fall back to forecast entry for future-only rows
+  const obsEntry  = payload.find(p => p.dataKey === "obs");
+  const fcstEntry = payload.find(p => p.dataKey === "fcst");
+  const entry = obsEntry ?? fcstEntry;
+  if (!entry) return null;
 
-  const d = obsEntry.payload; // the full data row
-
+  const d = entry.payload; // the full data row
   const timeStr = format(new Date(d.time), "h:mm a 'ET'");
 
   return (
     <div className="chart-tooltip">
       <div className="chart-tooltip-time">{timeStr}</div>
-      <div className="chart-tooltip-row">
-        <span className="chart-tooltip-label">Observed</span>
-        <span className="chart-tooltip-value" style={{ color: C.acc }}>
-          {d.obs != null ? `${d.obs.toFixed(1)}°F` : "–"}
-        </span>
-      </div>
+      {d.obs != null && (
+        <div className="chart-tooltip-row">
+          <span className="chart-tooltip-label">Observed</span>
+          <span className="chart-tooltip-value" style={{ color: C.acc }}>
+            {d.obs.toFixed(1)}°F
+          </span>
+        </div>
+      )}
       {d.fcst != null && (
         <div className="chart-tooltip-row">
           <span className="chart-tooltip-label">NWS Forecast</span>
