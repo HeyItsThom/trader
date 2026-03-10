@@ -55,6 +55,27 @@ def prob_exceed(threshold: float, pred, current_high: float) -> float:
     return 1.0 - norm_cdf(z)
 
 
+def trend_confidence(times: list, temps: list):
+    if len(times) < 4:
+        return "Low", "few obs"
+    v30  = velocity(times, temps, 0.5)
+    v60  = velocity(times, temps, 1.0)
+    v120 = velocity(times, temps, 2.0)
+    vels = [v for v in [v30, v60, v120] if v is not None]
+    if len(vels) < 2:
+        return "Low", "few obs"
+    dirs     = [1 if v > 0.3 else -1 if v < -0.3 else 0 for v in vels]
+    non_flat = [d for d in dirs if d != 0]
+    unique   = set(non_flat)
+    if len(unique) > 1:  return "Low",    "conflicting"
+    if len(unique) == 0: return "Medium", "near-flat"
+    magnitudes   = [abs(v) for v in vels]
+    consistency  = min(magnitudes) / max(magnitudes) if max(magnitudes) > 0.1 else 0
+    if consistency >= 0.55: return "High",   "consistent"
+    if consistency >= 0.25: return "Medium", "moderate"
+    return "Low", "variable rate"
+
+
 def velocity(times: list, temps: list, window_hr: float = 1.0) -> Optional[float]:
     if len(times) < 2:
         return None
@@ -335,6 +356,8 @@ def get_data():
         else:
             trend = "Steady"
 
+        trend_conf, trend_conf_reason = trend_confidence(merged_times, merged_temps)
+
         pk = peak_status(now_et)
 
         metar_match = None
@@ -366,6 +389,8 @@ def get_data():
             "prediction": prediction,
             "velocity": vel_val,
             "trend": trend,
+            "trend_conf": trend_conf,
+            "trend_conf_reason": trend_conf_reason,
             "peak": pk,
             "obs_count": len(merged_temps),
             "last_obs_time": merged_times[-1].strftime("%-I:%M %p") if merged_times else None,

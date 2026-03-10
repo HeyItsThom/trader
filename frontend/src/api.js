@@ -223,7 +223,28 @@ async function fetchMetarHistory() {
 }
 
 // ── Main data loader ──────────────────────────────────────────────────────────
+
+// Try the Flask backend first — it uses tgftp.weather.gov for real-time METAR
+// (same source as WU). Falls back to direct NWS API calls if backend is down.
 export async function loadData() {
+  try {
+    const res = await fetch('/api/data', { signal: AbortSignal.timeout(8000) });
+    if (res.ok) {
+      const json = await res.json();
+      if (!json.error) {
+        // Normalise any fields the Python backend may not yet include
+        return {
+          trend_conf:        json.trend_conf        ?? "Low",
+          trend_conf_reason: json.trend_conf_reason ?? "",
+          ...json,
+        };
+      }
+    }
+  } catch { /* backend not running — fall through */ }
+  return loadDataDirect();
+}
+
+async function loadDataDirect() {
   const [obs, fcst, metar, latestObs] = await Promise.all([
     fetchObservations(),
     fetchForecast(),
