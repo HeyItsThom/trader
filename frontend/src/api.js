@@ -143,7 +143,8 @@ function predictHigh(obsTimes, obsTemps, fcstTimes, fcstTemps, nowEt) {
 
 // ── Fetchers ──────────────────────────────────────────────────────────────────
 
-// Fetch the single most-current NWS observation (fresher than the list endpoint)
+// Fetch the most-current NWS observation from /stations/KBOS/observations/latest.
+// This is the primary real-time data source for current conditions.
 async function fetchLatestObservation() {
   try {
     const res = await fetch(`${NWS_OBS_URL}/latest`, { headers: HEADERS });
@@ -152,7 +153,25 @@ async function fetchLatestObservation() {
     const tempC = p.temperature?.value;
     const ts    = p.timestamp;
     if (tempC == null || ts == null) return null;
-    return { time: new Date(ts).getTime(), temp: cToF(tempC) };
+
+    const result = { time: new Date(ts).getTime(), temp: cToF(tempC) };
+
+    // Wind speed: NWS returns km/h → convert to mph
+    const windKmh = p.windSpeed?.value;
+    if (windKmh != null) result.wind_speed_mph = Math.round(windKmh * 0.621371 * 10) / 10;
+
+    // Wind direction in degrees
+    const windDir = p.windDirection?.value;
+    if (windDir != null) result.wind_direction = Math.round(windDir);
+
+    // Relative humidity (%)
+    const humidity = p.relativeHumidity?.value;
+    if (humidity != null) result.humidity = Math.round(humidity);
+
+    // Human-readable sky/weather description
+    if (p.textDescription) result.conditions = p.textDescription;
+
+    return result;
   } catch { return null; }
 }
 
@@ -344,5 +363,10 @@ async function loadDataDirect() {
           hour: "numeric", minute: "2-digit", timeZone: "America/New_York",
         })
       : null,
+    // Fields from NWS /observations/latest (primary real-time source)
+    latest_wind_speed_mph: latestObs?.wind_speed_mph ?? null,
+    latest_wind_direction: latestObs?.wind_direction ?? null,
+    latest_humidity:       latestObs?.humidity       ?? null,
+    latest_conditions:     latestObs?.conditions     ?? null,
   };
 }

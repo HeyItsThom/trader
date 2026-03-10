@@ -201,7 +201,11 @@ def parse_metar_temp(raw: str):
 
 # ── Data fetchers ──────────────────────────────────────────────────────────────
 def fetch_latest_observation():
-    """Fetch the single most-current NWS observation (fresher than the list endpoint)."""
+    """Fetch the most-current NWS observation from /stations/KBOS/observations/latest.
+
+    Returns temperature plus additional surface conditions (wind, humidity, sky).
+    This is the primary real-time data source for current conditions.
+    """
     try:
         resp = requests.get(f"{NWS_OBS_URL}/latest", headers=HEADERS, timeout=10)
         resp.raise_for_status()
@@ -209,11 +213,34 @@ def fetch_latest_observation():
         temp_c = props.get("temperature", {}).get("value")
         ts     = props.get("timestamp")
         if temp_c is None or ts is None:
-            return None, None
+            return None, None, {}
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(EASTERN_TZ)
-        return dt, c_to_f(temp_c)
+
+        extra = {}
+
+        # Wind speed: NWS returns km/h → convert to mph
+        wind_kmh = (props.get("windSpeed") or {}).get("value")
+        if wind_kmh is not None:
+            extra["wind_speed_mph"] = round(wind_kmh * 0.621371, 1)
+
+        # Wind direction in degrees
+        wind_dir = (props.get("windDirection") or {}).get("value")
+        if wind_dir is not None:
+            extra["wind_direction"] = int(wind_dir)
+
+        # Relative humidity (%)
+        humidity = (props.get("relativeHumidity") or {}).get("value")
+        if humidity is not None:
+            extra["humidity"] = round(humidity)
+
+        # Human-readable sky/weather description
+        text_desc = props.get("textDescription")
+        if text_desc:
+            extra["conditions"] = text_desc
+
+        return dt, c_to_f(temp_c), extra
     except Exception:
-        return None, None
+        return None, None, {}
 
 
 def fetch_observations():
@@ -309,7 +336,7 @@ def get_data():
         metar_temp, metar_time, metar_dt = fetch_metar()
         mh_times, mh_temps       = fetch_metar_history()
         fcst_times, fcst_temps, fcst_high = fetch_forecast()
-        latest_obs_time, latest_obs_temp  = fetch_latest_observation()
+        latest_obs_time, latest_obs_temp, latest_obs_extra = fetch_latest_observation()
 
         now_et = datetime.now(EASTERN_TZ)
 
@@ -395,6 +422,11 @@ def get_data():
             "metar_temp": metar_temp,
             "metar_time": metar_time,
             "metar_match": metar_match,
+            # Fields from NWS /observations/latest (primary real-time source)
+            "latest_wind_speed_mph": latest_obs_extra.get("wind_speed_mph"),
+            "latest_wind_direction": latest_obs_extra.get("wind_direction"),
+            "latest_humidity":       latest_obs_extra.get("humidity"),
+            "latest_conditions":     latest_obs_extra.get("conditions"),
             "prediction": prediction,
             "velocity": vel_val,
             "trend": trend,
