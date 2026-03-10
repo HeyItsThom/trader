@@ -372,14 +372,15 @@ def get_data():
             metar_temp = mh_temps[-1]
             metar_time = metar_dt.strftime("%-I:%M %p ET")
         fcst_times, fcst_temps, fcst_high = fetch_forecast()
-        latest_obs_time, latest_obs_temp  = fetch_latest_observation()
 
         now_et = datetime.now(EASTERN_TZ)
 
-        # Merge NWS obs + METAR history + latest NWS obs + live tgftp METAR.
+        # Merge NWS obs + METAR history + live tgftp METAR.
         # The live METAR from tgftp.weather.gov is the same feed WU uses and is
-        # the freshest available reading — inject it so day_high reflects it.
-        latest_pair = [(latest_obs_time, latest_obs_temp)] if latest_obs_time else []
+        # the freshest available reading — inject it so cur_temp/day_high match WU.
+        # NOTE: fetch_latest_observation() (NWS /latest API) is intentionally omitted
+        # because it rounds to integer °C, losing tenth-degree precision, and its
+        # slightly-later timestamp causes it to win the dedup over the METAR.
         metar_pair  = (
             [(metar_dt, metar_temp)]
             if metar_temp is not None and metar_dt is not None
@@ -389,7 +390,6 @@ def get_data():
         combined = sorted(
             [(t, v) for t, v in zip(obs_times, obs_temps)] +
             [(t, v) for t, v in zip(mh_times, mh_temps)] +
-            latest_pair +
             metar_pair,
             key=lambda x: x[0]
         )
