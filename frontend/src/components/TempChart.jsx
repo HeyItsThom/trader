@@ -237,11 +237,11 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
           {prediction && (
             <ReferenceLine
               y={prediction.point}
-              stroke={C.purp} strokeWidth={1} strokeDasharray="4 3" opacity={0.7}
+              stroke={C.purp} strokeWidth={1.5} strokeDasharray="6 3" opacity={0.85}
               label={{
-                value: `Pred ${prediction.point.toFixed(1)}° ±${prediction.spread.toFixed(1)}`,
+                value: `Pred High  ${prediction.point.toFixed(1)}°F`,
                 position: "insideTopRight",
-                fill: C.purp, fontSize: 9, fontWeight: 600,
+                fill: C.purp, fontSize: 10, fontWeight: 700,
               }}
             />
           )}
