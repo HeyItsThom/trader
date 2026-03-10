@@ -265,7 +265,16 @@ def fetch_forecast():
 
 
 def fetch_metar():
-    # Primary: aviationweather.gov JSON API (more reliable on Vercel than tgftp)
+    # Primary: tgftp.weather.gov raw METAR — same pipeline WU uses, updates within ~1 min
+    try:
+        resp = requests.get(METAR_URL, headers=HEADERS, timeout=10)
+        resp.raise_for_status()
+        result = parse_metar_temp(resp.text)
+        if result[0] is not None:
+            return result
+    except Exception:
+        pass
+    # Fallback: aviationweather.gov JSON API
     try:
         resp = requests.get(
             AVWX_METAR_URL,
@@ -282,13 +291,6 @@ def fetch_metar():
                 dt           = datetime.fromtimestamp(obs_ts, tz=zoneinfo.ZoneInfo("UTC")).astimezone(EASTERN_TZ)
                 obs_time_str = dt.strftime("%-I:%M %p ET")
                 return c_to_f(temp_c), obs_time_str, dt
-    except Exception:
-        pass
-    # Fallback: tgftp.weather.gov raw text METAR
-    try:
-        resp = requests.get(METAR_URL, headers=HEADERS, timeout=10)
-        resp.raise_for_status()
-        return parse_metar_temp(resp.text)
     except Exception:
         pass
     return None, None, None
