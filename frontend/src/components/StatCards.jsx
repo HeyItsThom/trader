@@ -28,7 +28,7 @@ export default function StatCards({ data }) {
     );
   }
 
-  const { cur_temp, day_high, fcst_high, prediction } = data;
+  const { cur_temp, day_high, fcst_high, prediction, metar_time } = data;
 
   let predText = "--";
   let predColor = C.purp;
@@ -41,7 +41,17 @@ export default function StatCards({ data }) {
   return (
     <div className="cards">
       <Card label="Current Temp"        value={cur_temp != null ? `${cur_temp.toFixed(1)}°F` : "--"} color={C.acc}  />
-      <Card label="Today's High (= WU)" value={day_high != null ? `${day_high.toFixed(1)}°F` : "--"} color={C.red}  />
+      <div className="stat-card">
+        <div className="stat-label">Today's High (= WU)</div>
+        <div className="stat-value" style={{ color: C.red }}>
+          {day_high != null ? `${day_high.toFixed(1)}°F` : "--"}
+        </div>
+        {metar_time && (
+          <div style={{ fontSize: "11px", color: C.sub, marginTop: "4px" }}>
+            WU verified {metar_time}
+          </div>
+        )}
+      </div>
       <Card label="NWS Forecast High"   value={fcst_high != null ? `${fcst_high.toFixed(0)}°F` : "--"} color={C.blue} />
       <div className="stat-card">
         <div className="stat-label">Predicted High</div>

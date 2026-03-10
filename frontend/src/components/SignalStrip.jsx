@@ -34,7 +34,7 @@ export default function SignalStrip({ data }) {
     );
   }
 
-  const { velocity, trend, trend_conf, trend_conf_reason, peak, hi_time, metar_temp, metar_match } = data;
+  const { velocity, trend, trend_conf, trend_conf_reason, peak, hi_time, metar_temp, metar_match, metar_time, metar_source } = data;
 
   const velColor = velocity == null ? C.sub
     : velocity > 0.5 ? C.red
@@ -54,9 +54,10 @@ export default function SignalStrip({ data }) {
 
   const peakColor = peak?.open ? C.grn : C.sub;
 
-  const metatText = metar_temp != null
+  const metarVal = metar_temp != null
     ? `${metar_temp.toFixed(1)}°F  ${metar_match ?? ""}`
     : "--";
+  const metarSub = [metar_time, metar_source].filter(Boolean).join(" · ");
   const metarColor = metar_match === "matches" ? C.grn
     : metar_match?.startsWith("Δ") ? C.gold
     : C.sub;
@@ -78,7 +79,11 @@ export default function SignalStrip({ data }) {
       <Sig label="Rate of Change" value={velText}              color={velColor}   />
       <Sig label="Peak Window"    value={peak?.label ?? "--"}  color={peakColor}  />
       <Sig label="High Set At"    value={hi_time ?? "--"}                         />
-      <Sig label="METAR / WU Now" value={metatText}            color={metarColor} />
+      <div className="sig-cell">
+        <div className="sig-label">METAR / WU Now</div>
+        <div className="sig-value" style={{ color: metarColor }}>{metarVal}</div>
+        {metarSub && <div style={{ fontSize: "11px", color: C.sub, marginTop: "2px" }}>{metarSub}</div>}
+      </div>
     </div>
   );
 }
