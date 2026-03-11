@@ -81,7 +81,9 @@ function peakStatus(nowEt) {
 }
 
 // ── Prediction engine ─────────────────────────────────────────────────────────
-function predictHigh(obsTimes, obsTemps, fcstTimes, fcstTemps, nowEt) {
+// trendTimes/trendTemps: dense series (OM 15-min + actual obs) for velocity.
+// If not provided, falls back to obs-only.
+function predictHigh(obsTimes, obsTemps, fcstTimes, fcstTemps, nowEt, trendTimes = [], trendTemps = []) {
   if (!obsTemps.length) return null;
 
   const curHigh  = Math.max(...obsTemps);
@@ -101,9 +103,26 @@ function predictHigh(obsTimes, obsTemps, fcstTimes, fcstTemps, nowEt) {
   const fcstVals = fcstTemps.filter((_, i) => new Date(fcstTimes[i]).toDateString() === today);
   const fcstHigh = fcstVals.length ? Math.max(...fcstVals) : null;
 
-  const vel = velocity(obsTimes, obsTemps, 1.0) ?? velocity(obsTimes, obsTemps, 2.0) ?? 0;
+  // Velocity: prefer dense trend series (OM 15-min gives 4–8 readings per window)
+  // Weighted blend of 3 windows so short-term responsiveness and long-term
+  // stability are both represented.  Weights: 30m×3, 1h×2, 2h×1.
+  const vTimes = trendTimes.length > 1 ? trendTimes : obsTimes;
+  const vTemps = trendTemps.length > 1 ? trendTemps : obsTemps;
+  const v30  = velocity(vTimes, vTemps, 0.5);
+  const v60  = velocity(vTimes, vTemps, 1.0);
+  const v120 = velocity(vTimes, vTemps, 2.0);
+  const velPairs = [[v30, 3], [v60, 2], [v120, 1]].filter(([v]) => v != null);
+  let vel;
+  if (!velPairs.length) {
+    vel = 0;
+  } else {
+    const totalW = velPairs.reduce((s, [, w]) => s + w, 0);
+    vel = velPairs.reduce((s, [v, w]) => s + v * w / totalW, 0);
+  }
+
   let hoursToPeak = Math.max(0, peakHr - hourFrac);
   if (vel < 0 && hourFrac > peakHr) hoursToPeak = 0;
+  // Extrapolation starts from actual latest KBOS reading, not model data
   const trendHigh = Math.max(curHigh, obsTemps[obsTemps.length-1] + vel * hoursToPeak);
 
   let wf, wt;
@@ -373,13 +392,10 @@ async function loadDataDirect() {
   const nowEtProxy = { getHours: () => hr, getMinutes: () => mn,
                        getMonth: () => mo - 1, toDateString: () => new Date(yr, mo-1, dy).toDateString() };
 
-  // Use merged series for prediction (includes latest METAR readings)
-  const prediction = predictHigh(mergedTimes, mergedTemps, fcst.times, fcst.temps, nowEtProxy);
-
-  // ── Trend / velocity — use Open-Meteo 15-min data for density ───────────────
-  // Merge actual obs with Open-Meteo 15-min model data into a denser series.
-  // Actual obs take priority over OM when they fall in the same 8-min bucket.
-  // Day_high and chart stay on actual-obs-only (mergedTimes/Temps above).
+  // ── Dense trend series (OM 15-min + actual obs) ──────────────────────────────
+  // Built before prediction so the engine can use it for velocity.
+  // Actual obs take priority: ASOS :54 timestamps sort after OM :00/:15 slots,
+  // so the 8-min dedup naturally keeps the real reading over the model reading.
   const trendCombined = [
     ...mergedTimes.map((t, i) => ({ t, temp: mergedTemps[i] })),
     ...omTrend.times.map((t, i) => ({ t, temp: omTrend.temps[i] })),
@@ -388,7 +404,7 @@ async function loadDataDirect() {
   for (const entry of trendCombined) {
     const last = trendDeduped[trendDeduped.length - 1];
     if (last && entry.t - last.t < 8 * 60 * 1000) {
-      trendDeduped[trendDeduped.length - 1] = entry; // keep later (actual obs sorts after OM :00/:15 slots)
+      trendDeduped[trendDeduped.length - 1] = entry;
     } else {
       trendDeduped.push(entry);
     }
@@ -396,6 +412,12 @@ async function loadDataDirect() {
   const trendTimes = trendDeduped.map(e => e.t);
   const trendTemps = trendDeduped.map(e => e.temp);
 
+  // Prediction: uses actual obs for day_high / extrapolation start,
+  // but the dense trend series for a better-informed velocity estimate.
+  const prediction = predictHigh(mergedTimes, mergedTemps, fcst.times, fcst.temps, nowEtProxy, trendTimes, trendTemps);
+
+  // Display velocity — reuse the weighted blend already computed inside predictHigh
+  // by calling the same logic on the same dense series.
   const vel = velocity(trendTimes, trendTemps, 1.0)
            ?? velocity(trendTimes, trendTemps, 2.0);
 

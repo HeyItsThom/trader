@@ -98,7 +98,8 @@ def peak_status(now_et: datetime) -> dict:
 
 
 # ── Prediction engine ──────────────────────────────────────────────────────────
-def predict_high(obs_times, obs_temps, fcst_times, fcst_temps, now_et) -> Optional[dict]:
+def predict_high(obs_times, obs_temps, fcst_times, fcst_temps, now_et,
+                 trend_times=None, trend_temps=None) -> Optional[dict]:
     if not obs_temps:
         return None
 
@@ -119,10 +120,24 @@ def predict_high(obs_times, obs_temps, fcst_times, fcst_temps, now_et) -> Option
     fcst_vals = [v for t, v in zip(fcst_times, fcst_temps) if t.date() == today]
     fcst_high = max(fcst_vals) if fcst_vals else None
 
-    vel = velocity(obs_times, obs_temps, 1.0) or velocity(obs_times, obs_temps, 2.0) or 0.0
+    # Use dense trend series when available; weighted blend across 3 windows
+    # so short-term responsiveness and longer-term stability both contribute.
+    v_times = trend_times if (trend_times and len(trend_times) > 1) else obs_times
+    v_temps = trend_temps if (trend_temps and len(trend_temps) > 1) else obs_temps
+    v30  = velocity(v_times, v_temps, 0.5)
+    v60  = velocity(v_times, v_temps, 1.0)
+    v120 = velocity(v_times, v_temps, 2.0)
+    vel_pairs = [(v, w) for v, w in [(v30, 3), (v60, 2), (v120, 1)] if v is not None]
+    if not vel_pairs:
+        vel = 0.0
+    else:
+        total_w = sum(w for _, w in vel_pairs)
+        vel = sum(v * w / total_w for v, w in vel_pairs)
+
     hours_to_peak = max(0.0, peak_hr - hour_frac)
     if vel < 0 and hour_frac > peak_hr:
         hours_to_peak = 0.0
+    # Extrapolation starts from actual latest KBOS reading, not model data
     trend_high = max(cur_high, obs_temps[-1] + vel * hours_to_peak)
 
     if hour_frac < PEAK_WINDOW[0]:
@@ -393,12 +408,21 @@ def get_data():
             except ValueError:
                 pass
 
-        prediction = predict_high(merged_times, merged_temps, fcst_times, fcst_temps, now_et)
+        # Pass merged series as the trend series too (backend has IEM sub-hourly
+        # data already merged; JS frontend will pass the denser OM 15-min series).
+        prediction = predict_high(merged_times, merged_temps, fcst_times, fcst_temps, now_et,
+                                  trend_times=merged_times, trend_temps=merged_temps)
 
-        # Prefer 1-hour velocity; fall back to 2-hour if recent NWS obs have
-        # null temperatures leaving only latestObs in the short window.
-        vel_val = velocity(merged_times, merged_temps, 1.0) or \
-                  velocity(merged_times, merged_temps, 2.0)
+        # Display velocity uses the same weighted blend as predict_high.
+        v30_d  = velocity(merged_times, merged_temps, 0.5)
+        v60_d  = velocity(merged_times, merged_temps, 1.0)
+        v120_d = velocity(merged_times, merged_temps, 2.0)
+        vel_pairs_d = [(v, w) for v, w in [(v30_d, 3), (v60_d, 2), (v120_d, 1)] if v is not None]
+        if vel_pairs_d:
+            total_w = sum(w for _, w in vel_pairs_d)
+            vel_val = sum(v * w / total_w for v, w in vel_pairs_d)
+        else:
+            vel_val = None
 
         # Derive trend from 1-hour velocity so it always agrees with Rate of Change
         if vel_val is None:
