@@ -7,6 +7,7 @@ const STATION_ID     = "KBOS";
 const NWS_OBS_URL    = `https://api.weather.gov/stations/${STATION_ID}/observations`;
 const NWS_POINTS     = "https://api.weather.gov/points/42.3601,-71.0589";
 const AVWX_METAR_URL = "https://aviationweather.gov/api/data/metar";
+const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
 const HEADERS        = { "User-Agent": "BostonTempTracker/1.0 (personal trading tool)" };
 
 const PEAK_HOUR   = {1:13,2:13,3:14,4:14,5:14,6:15,7:15,8:15,9:14,10:14,11:13,12:13};
@@ -251,6 +252,44 @@ async function fetchMetarHistory() {
   }
 }
 
+// Fetch 15-minute interval temperature from Open-Meteo at KBOS coordinates.
+// Used exclusively for velocity/trend calculation — NOT for day_high or the
+// chart, which stay on actual NWS/IEM/METAR observations.
+// Open-Meteo is free, CORS-enabled, no API key, ~96h latency-free window.
+async function fetchOpenMeteoTrend() {
+  try {
+    const params = new URLSearchParams({
+      latitude:      "42.3601",
+      longitude:     "-71.0589",
+      minutely_15:   "temperature_2m",
+      timezone:      "UTC",   // receive UTC strings → safe to parse with "Z" suffix
+      past_days:     "1",     // yesterday + today covers the full ET calendar day
+      forecast_days: "1",
+    });
+    const res = await fetch(`${OPEN_METEO_URL}?${params}`);
+    if (!res.ok) return { times: [], temps: [] };
+    const json = await res.json();
+    const m15  = json.minutely_15;
+    if (!m15?.time?.length) return { times: [], temps: [] };
+
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const nowMs = Date.now();
+    const pairs = [];
+    for (let i = 0; i < m15.time.length; i++) {
+      const tempC = m15.temperature_2m[i];
+      if (tempC == null) continue;
+      const dt = new Date(m15.time[i] + "Z"); // Open-Meteo UTC → explicit Z parse
+      if (dt.getTime() > nowMs) continue;      // skip future model output
+      if (dt.toLocaleDateString("en-CA", { timeZone: "America/New_York" }) === today)
+        pairs.push([dt.getTime(), cToF(tempC)]);
+    }
+    pairs.sort((a, b) => a[0] - b[0]);
+    return { times: pairs.map(p => p[0]), temps: pairs.map(p => p[1]) };
+  } catch {
+    return { times: [], temps: [] };
+  }
+}
+
 // ── Main data loader ──────────────────────────────────────────────────────────
 
 // Try the Flask backend first — it uses tgftp.weather.gov for real-time METAR
@@ -275,12 +314,13 @@ export async function loadData() {
 }
 
 async function loadDataDirect() {
-  const [obs, fcst, metar, latestObs, iem] = await Promise.all([
+  const [obs, fcst, metar, latestObs, iem, omTrend] = await Promise.all([
     fetchObservations(),
     fetchForecast(),
     fetchMetarHistory(),
     fetchLatestObservation(),
     fetchIEMHistory(),
+    fetchOpenMeteoTrend(),  // 15-min model data for trend only
   ]);
 
   const now    = new Date();
@@ -336,11 +376,28 @@ async function loadDataDirect() {
   // Use merged series for prediction (includes latest METAR readings)
   const prediction = predictHigh(mergedTimes, mergedTemps, fcst.times, fcst.temps, nowEtProxy);
 
-  // Prefer the 1-hour velocity; fall back to 2-hour if NWS hourly obs have
-  // null temperatures for recent readings (common) leaving only latestObs in
-  // the short window — a single point makes velocity() return null.
-  const vel = velocity(mergedTimes, mergedTemps, 1.0)
-           ?? velocity(mergedTimes, mergedTemps, 2.0);
+  // ── Trend / velocity — use Open-Meteo 15-min data for density ───────────────
+  // Merge actual obs with Open-Meteo 15-min model data into a denser series.
+  // Actual obs take priority over OM when they fall in the same 8-min bucket.
+  // Day_high and chart stay on actual-obs-only (mergedTimes/Temps above).
+  const trendCombined = [
+    ...mergedTimes.map((t, i) => ({ t, temp: mergedTemps[i] })),
+    ...omTrend.times.map((t, i) => ({ t, temp: omTrend.temps[i] })),
+  ].sort((a, b) => a.t - b.t);
+  const trendDeduped = [];
+  for (const entry of trendCombined) {
+    const last = trendDeduped[trendDeduped.length - 1];
+    if (last && entry.t - last.t < 8 * 60 * 1000) {
+      trendDeduped[trendDeduped.length - 1] = entry; // keep later (actual obs sorts after OM :00/:15 slots)
+    } else {
+      trendDeduped.push(entry);
+    }
+  }
+  const trendTimes = trendDeduped.map(e => e.t);
+  const trendTemps = trendDeduped.map(e => e.temp);
+
+  const vel = velocity(trendTimes, trendTemps, 1.0)
+           ?? velocity(trendTimes, trendTemps, 2.0);
 
   // Derive trend from velocity so it always agrees with Rate of Change
   const trend = vel == null ? "Steady"
@@ -348,7 +405,7 @@ async function loadDataDirect() {
     : vel < -0.5 ? "Falling"
     : "Steady";
 
-  const trendConf = trendConfidence(mergedTimes, mergedTemps);
+  const trendConf = trendConfidence(trendTimes, trendTemps);
 
   // METAR / WU display: prefer /latest (freshest), fall back to METAR history
   const lastMetarTemp    = metar.temps.length ? metar.temps[metar.temps.length - 1] : null;
