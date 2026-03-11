@@ -31,14 +31,31 @@ function saveHistory(history) {
 const CALIB_KEY  = "predCalibration_v1";
 const CALIB_DAYS = 30; // rolling window
 
-function loadCalib() {
+async function loadCalib() {
+  // Try Vercel KV first (shared across all devices)
+  try {
+    const res = await fetch("/api/calibration");
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+    }
+  } catch { /* fall through to localStorage */ }
+  // Fallback: localStorage (works offline / local dev)
   try {
     const raw = localStorage.getItem(CALIB_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
 
-function saveCalib(c) {
+async function saveCalib(c) {
+  // Persist to Vercel KV (shared) and localStorage (offline fallback)
+  try {
+    await fetch("/api/calibration", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(c),
+    });
+  } catch { /* ignore network errors */ }
   try { localStorage.setItem(CALIB_KEY, JSON.stringify(c)); } catch {}
 }
 
@@ -80,7 +97,7 @@ export default function App() {
   const [countdown,   setCountdown]   = useState(REFRESH_MS / 1000);
   const [thresholds,  setThresholds]  = useState(loadThresholds);
   const [predHistory, setPredHistory] = useState(loadHistory);
-  const [calibHistory, setCalibHistory] = useState(loadCalib);
+  const [calibHistory, setCalibHistory] = useState([]);
   const [error,       setError]       = useState(null);
   const timerRef = useRef(null);
   const countRef = useRef(null);
@@ -169,6 +186,11 @@ export default function App() {
   }, [calibHistory, predHistory]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Load calibration from KV (or localStorage fallback) on mount
+  useEffect(() => {
+    loadCalib().then(data => setCalibHistory(data));
+  }, []);
 
   // Persist thresholds whenever they change
   useEffect(() => {

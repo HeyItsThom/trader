@@ -227,7 +227,7 @@ async function fetchForecast() {
 async function fetchIEMHistory() {
   try {
     const res = await fetch(
-      `https://mesonet.agron.iastate.edu/api/1/observations.json?station=${STATION_ID}&hours=24`,
+      `https://mesonet.agron.iastate.edu/api/1/observations.json?station=${STATION_ID}&hours=36`,
       { headers: HEADERS }
     );
     if (!res.ok) return { times: [], temps: [] };
@@ -252,7 +252,7 @@ async function fetchIEMHistory() {
 async function fetchMetarHistory() {
   try {
     const res = await fetch(
-      `${AVWX_METAR_URL}?ids=${STATION_ID}&format=json&hours=24`,
+      `${AVWX_METAR_URL}?ids=${STATION_ID}&format=json&hours=36`,
       { headers: HEADERS }
     );
     if (!res.ok) return { times: [], temps: [] };
@@ -356,6 +356,10 @@ async function loadDataDirect() {
     ...(latestObs ? [{ t: latestObs.time, temp: latestObs.temp }] : []),
   ].sort((a, b) => a.t - b.t);
 
+  // day_high from all readings before dedup — dedup can drop a SPECI peak when
+  // a routine observation a few minutes later has a slightly lower temperature.
+  const dayHigh = combined.length ? Math.max(...combined.map(e => e.temp)) : null;
+
   // Deduplicate: if two readings are within 10 min, keep the later one
   const deduped = [];
   for (const entry of combined) {
@@ -369,15 +373,12 @@ async function loadDataDirect() {
   const mergedTimes = deduped.map(e => e.t);
   const mergedTemps = deduped.map(e => e.temp);
 
-  const allHighs = mergedTemps;
-  const dayHigh  = allHighs.length ? Math.max(...allHighs) : null;
-
-  // High set time (search merged series)
+  // High set time — search pre-dedup combined so the timestamp matches the true peak
   let hiTime = "--";
   if (dayHigh != null) {
-    const idx = mergedTemps.indexOf(dayHigh);
-    if (idx !== -1) {
-      hiTime = new Date(mergedTimes[idx]).toLocaleTimeString("en-US",
+    const peak = combined.find(e => e.temp === dayHigh);
+    if (peak) {
+      hiTime = new Date(peak.t).toLocaleTimeString("en-US",
         { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
     }
   }
@@ -524,6 +525,11 @@ export async function loadHistoricalData(dateStr) {
 
   // Merge + deduplicate (same logic as main loader)
   const combined = times.map((t, i) => ({ t, temp: temps[i] })).sort((a, b) => a.t - b.t);
+
+  // day_high from all readings before dedup — dedup can overwrite a SPECI peak
+  // with a lower routine observation a few minutes later.
+  const dayHigh = combined.length ? Math.max(...combined.map(e => e.temp)) : null;
+
   const deduped  = [];
   for (const entry of combined) {
     const last = deduped[deduped.length - 1];
@@ -539,6 +545,6 @@ export async function loadHistoricalData(dateStr) {
   return {
     times:    mergedTimes,
     temps:    mergedTemps,
-    day_high: mergedTemps.length ? Math.max(...mergedTemps) : null,
+    day_high: dayHigh,
   };
 }

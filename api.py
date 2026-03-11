@@ -387,6 +387,10 @@ def get_data():
             metar_pair,
             key=lambda x: x[0]
         )
+        # day_high from all readings before dedup — dedup can drop a SPECI peak
+        # when a routine observation a few minutes later has a lower temperature.
+        day_high = max(v for _, v in combined) if combined else None
+
         # Deduplicate: within 10 min keep the later reading
         deduped = []
         for t, v in combined:
@@ -397,16 +401,13 @@ def get_data():
         merged_times = [x[0] for x in deduped]
         merged_temps = [x[1] for x in deduped]
 
-        day_high = max(merged_temps) if merged_temps else None
-
-        # High set time
+        # High set time — search pre-dedup combined so timestamp matches true peak
         hi_time = "--"
-        if day_high is not None and merged_temps:
-            try:
-                hi_idx  = merged_temps.index(day_high)
-                hi_time = merged_times[hi_idx].strftime("%I:%M %p").lstrip("0")
-            except ValueError:
-                pass
+        if day_high is not None:
+            for t, v in combined:
+                if v == day_high:
+                    hi_time = t.strftime("%I:%M %p").lstrip("0")
+                    break
 
         # Pass merged series as the trend series too (backend has IEM sub-hourly
         # data already merged; JS frontend will pass the denser OM 15-min series).
