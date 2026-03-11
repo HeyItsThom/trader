@@ -215,7 +215,9 @@ async function fetchIEMHistory() {
     const pairs = [];
     for (const obs of json.data ?? []) {
       if (obs.tmpf == null || obs.valid == null) continue;
-      const dt  = new Date(obs.valid);
+      // IEM returns valid in UTC ("YYYY-MM-DD HH:MM") — force UTC parse so the
+      // timestamp isn't shifted by the browser's local timezone offset.
+      const dt  = new Date(obs.valid.replace(" ", "T") + "Z");
       const day = dt.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
       if (day === today) pairs.push([dt.getTime(), obs.tmpf]);
     }
@@ -425,7 +427,7 @@ export async function loadHistoricalData(dateStr) {
       if (iemRes.ok) {
         for (const obs of (await iemRes.json()).data ?? []) {
           if (obs.tmpf == null || obs.valid == null) continue;
-          const dt = new Date(obs.valid);
+          const dt = new Date(obs.valid.replace(" ", "T") + "Z"); // IEM valid is UTC
           if (dt.toLocaleDateString("en-CA", { timeZone: "America/New_York" }) === dateStr) {
             times.push(dt.getTime());
             temps.push(obs.tmpf);
