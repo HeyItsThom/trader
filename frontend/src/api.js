@@ -454,6 +454,7 @@ async function loadDataDirect() {
     trend_conf:    trendConf.conf,
     trend_conf_reason: trendConf.reason,
     peak:          peakStatus(nowEtProxy),
+    trend_series:  trendTimes.map((t, i) => ({ time: new Date(t).toISOString(), temp: trendTemps[i] })),
     obs_count:     mergedTemps.length,
     last_obs_time: mergedTimes.length
       ? new Date(mergedTimes[mergedTimes.length - 1]).toLocaleTimeString("en-US", {

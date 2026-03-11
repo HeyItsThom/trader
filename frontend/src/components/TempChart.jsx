@@ -10,6 +10,7 @@ const C = {
   grn:  "#3fb950",
   blue: "#79c0ff",
   purp: "#bc8cff",
+  teal: "#3dcfcf",
   gold: "#d29922",
   sub:  "#8b949e",
   wht:  "#e6edf3",
@@ -30,10 +31,11 @@ function fmtTick(ts) {
 function ChartTooltip({ active, payload }) {
   if (!active || !payload || !payload.length) return null;
 
-  const obsEntry  = payload.find(p => p.dataKey === "obs");
-  const fcstEntry = payload.find(p => p.dataKey === "fcst");
-  const predEntry = payload.find(p => p.dataKey === "point");
-  const entry = obsEntry ?? fcstEntry ?? predEntry;
+  const obsEntry   = payload.find(p => p.dataKey === "obs");
+  const fcstEntry  = payload.find(p => p.dataKey === "fcst");
+  const predEntry  = payload.find(p => p.dataKey === "point");
+  const trendEntry = payload.find(p => p.dataKey === "trend");
+  const entry = obsEntry ?? fcstEntry ?? predEntry ?? trendEntry;
   if (!entry) return null;
 
   const d = entry.payload;
@@ -55,6 +57,14 @@ function ChartTooltip({ active, payload }) {
           <span className="chart-tooltip-label">NWS Forecast</span>
           <span className="chart-tooltip-value" style={{ color: C.blue }}>
             {d.fcst.toFixed(1)}°F
+          </span>
+        </div>
+      )}
+      {trendEntry?.payload?.trend != null && d.obs == null && (
+        <div className="chart-tooltip-row">
+          <span className="chart-tooltip-label">Trend (OM 15-min)</span>
+          <span className="chart-tooltip-value" style={{ color: C.teal }}>
+            {trendEntry.payload.trend.toFixed(1)}°F
           </span>
         </div>
       )}
@@ -101,7 +111,7 @@ function ChartTooltip({ active, payload }) {
 export default function TempChart({ data, thresholds = [], predHistory = [] }) {
   if (!data) return null;
 
-  const { observed = [], forecast = [], prediction, day_high, fcst_high, now } = data;
+  const { observed = [], forecast = [], prediction, day_high, fcst_high, now, trend_series = [] } = data;
   if (!observed.length) return null;
 
   // ── Build merged chart series ──────────────────────────────────────────────
@@ -135,11 +145,13 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
     .filter(f => new Date(f.time).getTime() > lastObsMs + 30 * 60 * 1000)
     .map(f => ({ time: new Date(f.time).getTime(), fcst: f.temp }));
 
-  const allRows = [...obsRows, ...fcstRows].sort((a, b) => a.time - b.time);
+  const allRows   = [...obsRows, ...fcstRows].sort((a, b) => a.time - b.time);
+  const trendRows = trend_series.map(p => ({ time: new Date(p.time).getTime(), trend: p.temp }));
 
   // ── Y-axis domain ─────────────────────────────────────────────────────────
   const allTemps = [
     ...observed.map(o => o.temp),
+    ...trend_series.map(p => p.temp),
     ...(prediction ? [prediction.low - 1, prediction.high + 1] : []),
     ...(fcst_high ? [fcst_high] : []),
     ...thresholds.filter(t => Math.abs(t - (day_high ?? 50)) <= 12).flatMap(t => [t - 1, t + 1]),
@@ -308,6 +320,21 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
             />
           )}
 
+          {/* Dense trend line (OM 15-min + actual obs merged) — fills gaps between hourly obs */}
+          {trendRows.length > 1 && (
+            <Line
+              data={trendRows}
+              type="monotone"
+              dataKey="trend"
+              stroke={C.teal}
+              strokeWidth={1.5}
+              dot={false}
+              isAnimationActive={false}
+              name="Trend (15-min)"
+              opacity={0.75}
+            />
+          )}
+
           {/* Observed temperature line */}
           <Line
             data={obsRows}
@@ -334,6 +361,12 @@ export default function TempChart({ data, thresholds = [], predHistory = [] }) {
           <div className="legend-dot" style={{ background: C.acc }} />
           Observed (KBOS)
         </div>
+        {trendRows.length > 1 && (
+          <div className="legend-item">
+            <div className="legend-dot" style={{ background: C.teal }} />
+            Trend (OM 15-min)
+          </div>
+        )}
         <div className="legend-item">
           <div className="legend-dot" style={{ background: C.blue, borderRadius: 2 }} />
           NWS Forecast
