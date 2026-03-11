@@ -61,7 +61,8 @@ def trend_confidence(times: list, temps: list):
     v30  = velocity(times, temps, 0.5)
     v60  = velocity(times, temps, 1.0)
     v120 = velocity(times, temps, 2.0)
-    vels = [v for v in [v30, v60, v120] if v is not None]
+    v180 = velocity(times, temps, 3.0)  # extra window when hourly data is sparse
+    vels = [v for v in [v30, v60, v120, v180] if v is not None]
     if len(vels) < 2:
         return "Low", "few obs"
     dirs     = [1 if v > 0.3 else -1 if v < -0.3 else 0 for v in vels]
@@ -394,7 +395,10 @@ def get_data():
 
         prediction = predict_high(merged_times, merged_temps, fcst_times, fcst_temps, now_et)
 
-        vel_val = velocity(merged_times, merged_temps)
+        # Prefer 1-hour velocity; fall back to 2-hour if recent NWS obs have
+        # null temperatures leaving only latestObs in the short window.
+        vel_val = velocity(merged_times, merged_temps, 1.0) or \
+                  velocity(merged_times, merged_temps, 2.0)
 
         # Derive trend from 1-hour velocity so it always agrees with Rate of Change
         if vel_val is None:

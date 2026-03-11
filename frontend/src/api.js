@@ -48,8 +48,9 @@ function trendConfidence(times, temps) {
   const v30  = velocity(times, temps, 0.5);
   const v60  = velocity(times, temps, 1.0);
   const v120 = velocity(times, temps, 2.0);
+  const v180 = velocity(times, temps, 3.0); // extra window when data is sparse
 
-  const vels = [v30, v60, v120].filter(v => v != null);
+  const vels = [v30, v60, v120, v180].filter(v => v != null);
   if (vels.length < 2) return { conf: "Low", reason: "few obs" };
 
   // Classify each velocity direction (ignore near-zero as neutral)
@@ -335,9 +336,13 @@ async function loadDataDirect() {
   // Use merged series for prediction (includes latest METAR readings)
   const prediction = predictHigh(mergedTimes, mergedTemps, fcst.times, fcst.temps, nowEtProxy);
 
-  const vel = velocity(mergedTimes, mergedTemps);
+  // Prefer the 1-hour velocity; fall back to 2-hour if NWS hourly obs have
+  // null temperatures for recent readings (common) leaving only latestObs in
+  // the short window — a single point makes velocity() return null.
+  const vel = velocity(mergedTimes, mergedTemps, 1.0)
+           ?? velocity(mergedTimes, mergedTemps, 2.0);
 
-  // Derive trend from 1-hour velocity so it always agrees with Rate of Change
+  // Derive trend from velocity so it always agrees with Rate of Change
   const trend = vel == null ? "Steady"
     : vel >  0.5 ? "Rising"
     : vel < -0.5 ? "Falling"
