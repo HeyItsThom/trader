@@ -5,6 +5,7 @@ import StatCards         from "./components/StatCards";
 import SignalStrip       from "./components/SignalStrip";
 import TempChart         from "./components/TempChart";
 import BetsPanel         from "./components/BetsPanel";
+import HistoricalView    from "./components/HistoricalView";
 
 const REFRESH_MS = 60_000;
 
@@ -222,6 +223,8 @@ export default function App() {
       {data && <TempChart data={data} thresholds={thresholds} predHistory={predHistory} />}
 
       <BetsPanel data={data} thresholds={thresholds} setThresholds={setThresholds} />
+
+      <HistoricalView calibHistory={calibHistory} />
 
 <div className="footer">
         <span>Data: NWS KBOS = WU · METAR = WU current conditions · Refreshes every 60 s</span>

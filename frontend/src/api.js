@@ -376,3 +376,82 @@ async function loadDataDirect() {
       : null,
   };
 }
+
+// ── Historical data loader (for Past Days viewer) ─────────────────────────────
+
+/**
+ * Fetch observed temperatures for a past ET calendar day.
+ * dateStr = "YYYY-MM-DD" in ET.
+ * Returns { times: number[], temps: number[], day_high: number|null }.
+ */
+export async function loadHistoricalData(dateStr) {
+  const [year, month, day] = dateStr.split('-').map(Number);
+
+  // Window that covers the full ET calendar day in both EST (UTC-5) and EDT (UTC-4).
+  // Start 4 AM UTC = midnight EDT; end 5 AM UTC next day = midnight EST.
+  const startUtc  = `${dateStr}T04:00:00Z`;
+  const nextDay   = new Date(Date.UTC(year, month - 1, day + 1));
+  const endUtc    = `${nextDay.toISOString().slice(0, 10)}T05:00:00Z`;
+
+  // Fetch NWS observations (supports CORS + date-range query)
+  const url = `${NWS_OBS_URL}?start=${encodeURIComponent(startUtc)}&end=${encodeURIComponent(endUtc)}&limit=200`;
+  const res = await fetch(url, { headers: HEADERS });
+  if (!res.ok) throw new Error(`NWS returned HTTP ${res.status}`);
+
+  const data  = await res.json();
+  const times = [], temps = [];
+  for (const feat of [...(data.features ?? [])].reverse()) {
+    const p     = feat.properties ?? {};
+    const tempC = p.temperature?.value;
+    const ts    = p.timestamp;
+    if (tempC == null || ts == null) continue;
+    const dt = new Date(ts);
+    if (dt.toLocaleDateString("en-CA", { timeZone: "America/New_York" }) === dateStr) {
+      times.push(dt.getTime());
+      temps.push(cToF(tempC));
+    }
+  }
+
+  // Also pull IEM ASOS for that day (only works within ~7 days back)
+  try {
+    const [y2, m2, d2] = [year, month, day];
+    const dayStartMs   = new Date(y2, m2 - 1, d2, 0, 0, 0, 0).getTime();
+    const hoursBack    = Math.ceil((Date.now() - dayStartMs) / 3_600_000) + 25;
+    if (hoursBack <= 7 * 24) {
+      const iemRes = await fetch(
+        `https://mesonet.agron.iastate.edu/api/1/observations.json?station=${STATION_ID}&hours=${hoursBack}`,
+        { headers: HEADERS }
+      );
+      if (iemRes.ok) {
+        for (const obs of (await iemRes.json()).data ?? []) {
+          if (obs.tmpf == null || obs.valid == null) continue;
+          const dt = new Date(obs.valid);
+          if (dt.toLocaleDateString("en-CA", { timeZone: "America/New_York" }) === dateStr) {
+            times.push(dt.getTime());
+            temps.push(obs.tmpf);
+          }
+        }
+      }
+    }
+  } catch { /* IEM is optional */ }
+
+  // Merge + deduplicate (same logic as main loader)
+  const combined = times.map((t, i) => ({ t, temp: temps[i] })).sort((a, b) => a.t - b.t);
+  const deduped  = [];
+  for (const entry of combined) {
+    const last = deduped[deduped.length - 1];
+    if (last && entry.t - last.t < 10 * 60 * 1000) {
+      deduped[deduped.length - 1] = entry;
+    } else {
+      deduped.push(entry);
+    }
+  }
+
+  const mergedTimes = deduped.map(e => e.t);
+  const mergedTemps = deduped.map(e => e.temp);
+  return {
+    times:    mergedTimes,
+    temps:    mergedTemps,
+    day_high: mergedTemps.length ? Math.max(...mergedTemps) : null,
+  };
+}

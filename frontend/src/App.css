@@ -187,6 +187,91 @@
 .bet-status { font-size: 13px; font-weight: 700; }
 .bet-detail { font-size: 11px; color: var(--sub); }
 
+/* ── Historical day viewer ── */
+.hist-wrap {
+  margin-top: 10px;
+}
+
+.hist-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: var(--panel);
+  color: var(--sub);
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+.hist-toggle:hover { background: var(--card); color: var(--wht); }
+.hist-toggle-arrow { font-size: 10px; color: var(--sub); }
+
+.hist-body {
+  background: var(--panel);
+  border-radius: 0 0 6px 6px;
+  padding: 10px 12px 14px;
+}
+
+.hist-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.hist-date {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--wht);
+}
+
+.hist-status {
+  text-align: center;
+  color: var(--sub);
+  padding: 24px 0;
+  font-size: 13px;
+}
+.hist-error { color: var(--red); }
+
+.hist-empty {
+  text-align: center;
+  color: var(--sub);
+  padding: 20px 0;
+  font-size: 12px;
+}
+
+.hist-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+@media (max-width: 600px) {
+  .hist-stats { grid-template-columns: repeat(2, 1fr); }
+}
+
+.hist-stat {
+  background: var(--card);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.hist-stat-label { font-size: 10px; color: var(--sub); margin-bottom: 3px; }
+.hist-stat-value { font-size: 18px; font-weight: 700; color: var(--wht); }
+
+.hist-no-calib {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--sub);
+  text-align: center;
+  padding: 0 12px;
+}
+
 /* ── Footer ── */
 .footer {
   display: flex;
