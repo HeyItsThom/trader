@@ -8,7 +8,7 @@ import BetsPanel         from "./components/BetsPanel";
 
 const REFRESH_MS = 60_000;
 
-// Prediction history keyed by today's date in ET — auto-clears each new day
+// ── Prediction history (intra-day snapshots) ──────────────────────────────────
 const TODAY_KEY = `predHistory_${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })}`;
 
 function loadHistory() {
@@ -20,6 +20,34 @@ function loadHistory() {
 
 function saveHistory(history) {
   try { localStorage.setItem(TODAY_KEY, JSON.stringify(history)); } catch {}
+}
+
+// ── Calibration (multi-day learning) ─────────────────────────────────────────
+// Each entry: { date, earlyPred, actual, error }
+// "earlyPred" = median of pre-noon predictions that day
+// "actual"    = day_high once prediction is Locked (peak window closed)
+// "error"     = actual − earlyPred  (positive → we under-predicted)
+const CALIB_KEY  = "predCalibration_v1";
+const CALIB_DAYS = 30; // rolling window
+
+function loadCalib() {
+  try {
+    const raw = localStorage.getItem(CALIB_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveCalib(c) {
+  try { localStorage.setItem(CALIB_KEY, JSON.stringify(c)); } catch {}
+}
+
+// Returns the rolling mean error to subtract from future predictions.
+// Capped at ±3 °F to prevent overcorrection from unusual days.
+export function computeBias(calibHistory) {
+  if (!calibHistory.length) return 0;
+  const recent = calibHistory.slice(-CALIB_DAYS);
+  const mean   = recent.reduce((s, d) => s + d.error, 0) / recent.length;
+  return Math.max(-3, Math.min(3, mean));
 }
 
 function loadThresholds() {
@@ -51,6 +79,7 @@ export default function App() {
   const [countdown,   setCountdown]   = useState(REFRESH_MS / 1000);
   const [thresholds,  setThresholds]  = useState(loadThresholds);
   const [predHistory, setPredHistory] = useState(loadHistory);
+  const [calibHistory, setCalibHistory] = useState(loadCalib);
   const [error,       setError]       = useState(null);
   const timerRef = useRef(null);
   const countRef = useRef(null);
@@ -60,10 +89,26 @@ export default function App() {
     try {
       setStatus({ text: "Refreshing…", color: "#8b949e" });
       const json = await loadData();
+
+      // ── Apply learned bias correction to the prediction ───────────────────
+      // bias = rolling mean of (actual − earlyPred) over the last CALIB_DAYS days
+      // Positive bias → we've been under-predicting → nudge point upward.
+      if (json.prediction && json.prediction.confidence !== "Locked") {
+        const bias = computeBias(calibHistory);
+        if (bias !== 0) {
+          json.prediction = {
+            ...json.prediction,
+            point: json.prediction.point + bias,
+            low:   json.prediction.low   + bias,
+            high:  json.prediction.high  + bias,
+          };
+        }
+      }
+
       setData(json);
       setError(null);
 
-      // Accumulate prediction history throughout the day (one snapshot per refresh)
+      // ── Accumulate intra-day prediction snapshots ─────────────────────────
       if (json.prediction && json.prediction.confidence !== "Locked") {
         const snap = {
           time:       new Date(json.now).getTime(),
@@ -73,10 +118,38 @@ export default function App() {
           confidence: json.prediction.confidence,
         };
         setPredHistory(prev => {
-          // If last snapshot was within 3 min, skip (handles rapid manual refreshes)
           if (prev.length && snap.time - prev[prev.length - 1].time < 3 * 60_000) return prev;
           const updated = [...prev, snap];
           saveHistory(updated);
+          return updated;
+        });
+      }
+
+      // ── Save calibration point when day locks ─────────────────────────────
+      // Once the peak window closes the prediction is "Locked" and day_high is
+      // the final observed high — use it to measure how far off we were.
+      if (json.prediction?.confidence === "Locked" && json.day_high != null) {
+        const dateStr = new Date(json.now).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+        setCalibHistory(prev => {
+          if (prev.find(c => c.date === dateStr)) return prev; // already saved today
+
+          // Use pre-noon snapshots as the "early prediction" baseline
+          // (morning predictions are the most informative for calibration)
+          const nowEt   = new Date(json.now);
+          const noonMs  = new Date(json.now);
+          noonMs.setHours(12, 0, 0, 0);
+          const earlySnaps = predHistory.filter(s => s.time < noonMs.getTime());
+          if (!earlySnaps.length) return prev; // no pre-noon data to calibrate on
+
+          const earlyPred = earlySnaps.reduce((s, p) => s + p.point, 0) / earlySnaps.length;
+          const entry = {
+            date:      dateStr,
+            earlyPred: parseFloat(earlyPred.toFixed(2)),
+            actual:    json.day_high,
+            error:     parseFloat((json.day_high - earlyPred).toFixed(2)),
+          };
+          const updated = [...prev, entry].slice(-CALIB_DAYS);
+          saveCalib(updated);
           return updated;
         });
       }
@@ -92,7 +165,7 @@ export default function App() {
       setStatus({ text: `⚠  ${e.message}`, color: "#ff7b72" });
     }
     setCountdown(REFRESH_MS / 1000);
-  }, []);
+  }, [calibHistory, predHistory]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -121,6 +194,8 @@ export default function App() {
   const s = countdown % 60;
   const countdownText = `refresh in ${m}:${String(s).padStart(2,"0")}`;
 
+  const bias = computeBias(calibHistory);
+
   return (
     <div className="app">
       <div className="header">
@@ -138,7 +213,7 @@ export default function App() {
         </div>
       </div>
 
-      <StatCards data={data} />
+      <StatCards data={data} bias={bias} calibDays={calibHistory.length} />
       <SignalStrip data={data} />
 
       {error && !data && (

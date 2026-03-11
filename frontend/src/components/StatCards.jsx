@@ -16,7 +16,7 @@ function Card({ label, value, color }) {
   );
 }
 
-export default function StatCards({ data }) {
+export default function StatCards({ data, bias = 0, calibDays = 0 }) {
   if (!data) {
     return (
       <div className="cards">
@@ -32,10 +32,34 @@ export default function StatCards({ data }) {
 
   let predText = "--";
   let predColor = C.purp;
+  let biasLine = null;
   if (prediction) {
     const confColors = { High: C.grn, Medium: C.acc, Low: C.red, Locked: C.grn };
     predColor = confColors[prediction.confidence] ?? C.purp;
-    predText = `${prediction.point.toFixed(1)}°F ±${prediction.spread.toFixed(1)}°\n${prediction.confidence} confidence`;
+    predText  = `${prediction.point.toFixed(1)}°F ±${prediction.spread.toFixed(1)}°\n${prediction.confidence} confidence`;
+
+    // Show calibration bias when it's non-trivial (≥0.1°)
+    if (calibDays > 0 && Math.abs(bias) >= 0.1) {
+      const sign      = bias > 0 ? "+" : "";
+      const biasColor = Math.abs(bias) < 1 ? C.sub : bias > 0 ? C.grn : C.red;
+      biasLine = (
+        <div style={{ fontSize: "10px", color: biasColor, marginTop: "3px" }}>
+          model bias {sign}{bias.toFixed(1)}° · {calibDays}d
+        </div>
+      );
+    } else if (calibDays > 0) {
+      biasLine = (
+        <div style={{ fontSize: "10px", color: C.sub, marginTop: "3px" }}>
+          calibrated · {calibDays}d
+        </div>
+      );
+    } else {
+      biasLine = (
+        <div style={{ fontSize: "10px", color: C.sub, marginTop: "3px" }}>
+          learning…
+        </div>
+      );
+    }
   }
 
   return (
@@ -48,6 +72,7 @@ export default function StatCards({ data }) {
         <div className="stat-value" style={{ color: predColor, fontSize: prediction ? "18px" : "26px", whiteSpace: "pre-line" }}>
           {predText}
         </div>
+        {biasLine}
       </div>
     </div>
   );
