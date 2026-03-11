@@ -200,6 +200,32 @@ async function fetchForecast() {
   }
 }
 
+// Fetch ASOS observations from Iowa Environmental Mesonet — includes SPECI reports
+// so we get sub-hourly readings during significant weather changes, giving richer
+// trend data than the NWS hourly obs endpoint alone.
+async function fetchIEMHistory() {
+  try {
+    const res = await fetch(
+      `https://mesonet.agron.iastate.edu/api/1/observations.json?station=${STATION_ID}&hours=24`,
+      { headers: HEADERS }
+    );
+    if (!res.ok) return { times: [], temps: [] };
+    const json = await res.json();
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const pairs = [];
+    for (const obs of json.data ?? []) {
+      if (obs.tmpf == null || obs.valid == null) continue;
+      const dt  = new Date(obs.valid);
+      const day = dt.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+      if (day === today) pairs.push([dt.getTime(), obs.tmpf]);
+    }
+    pairs.sort((a, b) => a[0] - b[0]);
+    return { times: pairs.map(p => p[0]), temps: pairs.map(p => p[1]) };
+  } catch {
+    return { times: [], temps: [] };
+  }
+}
+
 async function fetchMetarHistory() {
   try {
     const res = await fetch(
@@ -233,10 +259,11 @@ export async function loadData() {
       const json = await res.json();
       if (!json.error) {
         // Normalise any fields the Python backend may not yet include
+        // NOTE: spread first so defaults below properly fill in any missing/null fields
         return {
+          ...json,
           trend_conf:        json.trend_conf        ?? "Low",
           trend_conf_reason: json.trend_conf_reason ?? "",
-          ...json,
         };
       }
     }
@@ -245,22 +272,25 @@ export async function loadData() {
 }
 
 async function loadDataDirect() {
-  const [obs, fcst, metar, latestObs] = await Promise.all([
+  const [obs, fcst, metar, latestObs, iem] = await Promise.all([
     fetchObservations(),
     fetchForecast(),
     fetchMetarHistory(),
     fetchLatestObservation(),
+    fetchIEMHistory(),
   ]);
 
   const now    = new Date();
   const nowEt  = now; // JS Date is fine for local computation; displayed in ET via Intl
 
-  // Merge NWS obs + METAR history + latest NWS observation into a unified series.
-  // latestObs hits a dedicated endpoint that's fresher than the list and helps
-  // close the gap with WU's near-real-time METAR display.
+  // Merge all sources into a unified series.
+  // IEM ASOS provides SPECI (special) observations for more frequent readings.
+  // tgftp METAR (via latestObs) is the same feed WU uses — inject it so day_high
+  // reflects what WU will report as the historic daily high.
   const combined = [
     ...obs.times.map((t, i) => ({ t, temp: obs.temps[i] })),
     ...metar.times.map((t, i) => ({ t, temp: metar.temps[i] })),
+    ...iem.times.map((t, i) => ({ t, temp: iem.temps[i] })),
     ...(latestObs ? [{ t: latestObs.time, temp: latestObs.temp }] : []),
   ].sort((a, b) => a.t - b.t);
 

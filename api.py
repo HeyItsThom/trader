@@ -271,6 +271,42 @@ def fetch_metar():
         return None, None, None
 
 
+def fetch_iem_history():
+    """Fetch ASOS observations from Iowa Environmental Mesonet.
+
+    IEM archives all ASOS reports including SPECI (special) observations
+    that occur outside the routine hourly cycle when significant weather
+    changes happen.  This gives sub-hourly resolution for trend calculation
+    and is the richest freely available source of KBOS temperature data.
+    """
+    try:
+        resp = requests.get(
+            "https://mesonet.agron.iastate.edu/api/1/observations.json",
+            params={"station": STATION_ID, "hours": 24},
+            headers=HEADERS,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        today = datetime.now(EASTERN_TZ).date()
+        times, temps = [], []
+        for obs in resp.json().get("data", []):
+            tmpf     = obs.get("tmpf")
+            valid_ts = obs.get("valid")
+            if tmpf is None or valid_ts is None:
+                continue
+            dt = datetime.fromisoformat(valid_ts).astimezone(EASTERN_TZ)
+            if dt.date() == today:
+                times.append(dt)
+                temps.append(float(tmpf))
+        if times:
+            pairs = sorted(zip(times, temps))
+            times, temps = zip(*pairs)
+            times, temps = list(times), list(temps)
+        return times, temps
+    except Exception:
+        return [], []
+
+
 def fetch_metar_history():
     try:
         resp = requests.get(
@@ -305,17 +341,21 @@ def fetch_metar_history():
 @app.route("/api/data")
 def get_data():
     try:
-        obs_times, obs_temps     = fetch_observations()
-        metar_temp, metar_time, metar_dt = fetch_metar()
-        mh_times, mh_temps       = fetch_metar_history()
+        obs_times, obs_temps              = fetch_observations()
+        metar_temp, metar_time, metar_dt  = fetch_metar()
+        mh_times, mh_temps               = fetch_metar_history()
+        iem_times, iem_temps             = fetch_iem_history()
         fcst_times, fcst_temps, fcst_high = fetch_forecast()
         latest_obs_time, latest_obs_temp  = fetch_latest_observation()
 
         now_et = datetime.now(EASTERN_TZ)
 
-        # Merge NWS obs + METAR history + latest NWS obs + live tgftp METAR.
+        # Merge all sources into a unified series.
+        # IEM ASOS includes SPECI (special) observations, giving sub-hourly
+        # resolution during significant weather changes — better trend data.
         # The live METAR from tgftp.weather.gov is the same feed WU uses and is
-        # the freshest available reading — inject it so day_high reflects it.
+        # the freshest available reading — inject it so day_high reflects what
+        # WU will report as the historic daily high for the day.
         latest_pair = [(latest_obs_time, latest_obs_temp)] if latest_obs_time else []
         metar_pair  = (
             [(metar_dt, metar_temp)]
@@ -326,6 +366,7 @@ def get_data():
         combined = sorted(
             [(t, v) for t, v in zip(obs_times, obs_temps)] +
             [(t, v) for t, v in zip(mh_times, mh_temps)] +
+            [(t, v) for t, v in zip(iem_times, iem_temps)] +
             latest_pair +
             metar_pair,
             key=lambda x: x[0]
@@ -402,6 +443,7 @@ def get_data():
             "trend_conf_reason": trend_conf_reason,
             "peak": pk,
             "obs_count": len(merged_temps),
+            "iem_count": len(iem_temps),
             "last_obs_time": merged_times[-1].strftime("%-I:%M %p") if merged_times else None,
         })
 
