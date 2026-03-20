@@ -263,33 +263,7 @@ def fetch_forecast():
 
 
 def fetch_metar():
-    """Return (temp_f, time_str, dt) for the most-current KBOS METAR.
-
-    Tries AVWX with hours=1 first (fresher cache tier than the 24h bulk query),
-    then falls back to tgftp.
-    """
-    # Primary: AVWX hours=1 — smallest batch, most likely to have the current obs
-    try:
-        resp = requests.get(
-            AVWX_METAR_URL,
-            params={"ids": STATION_ID, "format": "json", "hours": 1},
-            headers=HEADERS, timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data:
-            obs = sorted(data, key=lambda o: o.get("obsTime", 0))[-1]
-            temp_c   = obs.get("temp")
-            obs_time = obs.get("obsTime")
-            if temp_c is not None and obs_time is not None:
-                dt = datetime.fromtimestamp(
-                    obs_time, tz=zoneinfo.ZoneInfo("UTC")
-                ).astimezone(EASTERN_TZ)
-                return c_to_f(temp_c), dt.strftime("%-I:%M %p ET"), dt
-    except Exception:
-        pass
-
-    # Fallback: tgftp plaintext METAR
+    """Return (temp_f, time_str, dt) from tgftp — used as fallback when AVWX history is empty."""
     try:
         resp = requests.get(METAR_URL, headers=HEADERS, timeout=10)
         resp.raise_for_status()
@@ -333,18 +307,22 @@ def fetch_metar_history():
 def get_data():
     try:
         obs_times, obs_temps     = fetch_observations()
-        metar_temp, metar_time, metar_dt = fetch_metar()
         mh_times, mh_temps       = fetch_metar_history()
         fcst_times, fcst_temps, fcst_high = fetch_forecast()
         latest_obs_time, latest_obs_temp  = fetch_latest_observation()
 
         now_et = datetime.now(EASTERN_TZ)
 
-        # Merge NWS obs + METAR history + latest NWS obs + live METAR.
-        # The live METAR from tgftp.weather.gov is the same feed WU uses and is
-        # the freshest available reading — inject it so day_high reflects it.
-        # Fall back to now_et when the METAR timestamp header fails to parse so
-        # the reading is never silently dropped from the merge.
+        # Derive live METAR from the AVWX history fetch (last entry = most current).
+        # One AVWX request covers both history and current reading.
+        # Fall back to tgftp only if AVWX returned nothing.
+        if mh_times:
+            metar_dt   = mh_times[-1]
+            metar_temp = mh_temps[-1]
+            metar_time = metar_dt.strftime("%-I:%M %p ET")
+        else:
+            metar_temp, metar_time, metar_dt = fetch_metar()
+
         latest_pair = [(latest_obs_time, latest_obs_temp)] if latest_obs_time else []
         metar_ts    = metar_dt if metar_dt is not None else now_et
         metar_pair  = (
