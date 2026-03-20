@@ -518,7 +518,7 @@ class BostonTempTracker:
         self.lbl_trend  = self._sig(sig, "Trend",          "─",   1)
         self.lbl_peak   = self._sig(sig, "Peak Window",    "--",  2)
         self.lbl_hi_t   = self._sig(sig, "High Set At",    "--",  3)
-        self.lbl_metar  = self._sig(sig, "METAR / WU Now", "--",  4)
+        self.lbl_metar  = self._sig(sig, "METAR Now",      "--",  4)
 
         # ── Graph ─────────────────────────────────────────────────────────────
         self.fig = plt.Figure(figsize=(10, 3.4), facecolor=PANEL)

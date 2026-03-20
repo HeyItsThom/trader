@@ -29,7 +29,7 @@ export default function SignalStrip({ data }) {
         <Sig label="Rate of Change" value="--" />
         <Sig label="Peak Window"    value="--" />
         <Sig label="High Set At"    value="--" />
-        <Sig label="METAR / WU Now" value="--" />
+        <Sig label="METAR Now" value="--" />
       </div>
     );
   }
@@ -78,7 +78,7 @@ export default function SignalStrip({ data }) {
       <Sig label="Rate of Change" value={velText}              color={velColor}   />
       <Sig label="Peak Window"    value={peak?.label ?? "--"}  color={peakColor}  />
       <Sig label="High Set At"    value={hi_time ?? "--"}                         />
-      <Sig label="METAR / WU Now" value={metatText}            color={metarColor} />
+      <Sig label="METAR Now" value={metatText}            color={metarColor} />
     </div>
   );
 }

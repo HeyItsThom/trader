@@ -263,8 +263,35 @@ def fetch_forecast():
 
 
 def fetch_metar():
+    """Return (temp_f, time_str, dt) for the most-current KBOS METAR.
+
+    Tries AVWX with hours=1 first (fresher cache tier than the 24h bulk query),
+    then falls back to tgftp.
+    """
+    # Primary: AVWX hours=1 — smallest batch, most likely to have the current obs
     try:
-        resp   = requests.get(METAR_URL, headers=HEADERS, timeout=10)
+        resp = requests.get(
+            AVWX_METAR_URL,
+            params={"ids": STATION_ID, "format": "json", "hours": 1},
+            headers=HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data:
+            obs = sorted(data, key=lambda o: o.get("obsTime", 0))[-1]
+            temp_c   = obs.get("temp")
+            obs_time = obs.get("obsTime")
+            if temp_c is not None and obs_time is not None:
+                dt = datetime.fromtimestamp(
+                    obs_time, tz=zoneinfo.ZoneInfo("UTC")
+                ).astimezone(EASTERN_TZ)
+                return c_to_f(temp_c), dt.strftime("%-I:%M %p ET"), dt
+    except Exception:
+        pass
+
+    # Fallback: tgftp plaintext METAR
+    try:
+        resp = requests.get(METAR_URL, headers=HEADERS, timeout=10)
         resp.raise_for_status()
         return parse_metar_temp(resp.text)
     except Exception:
@@ -313,14 +340,7 @@ def get_data():
 
         now_et = datetime.now(EASTERN_TZ)
 
-        # Prefer the most recent AVWX METAR when it is newer than tgftp.
-        # tgftp can lag 5–10 min after a new METAR is issued; AVWX updates faster.
-        if mh_times and (metar_dt is None or mh_times[-1] > metar_dt):
-            metar_dt   = mh_times[-1]
-            metar_temp = mh_temps[-1]
-            metar_time = metar_dt.strftime("%-I:%M %p ET")
-
-        # Merge NWS obs + METAR history + latest NWS obs + live tgftp METAR.
+        # Merge NWS obs + METAR history + latest NWS obs + live METAR.
         # The live METAR from tgftp.weather.gov is the same feed WU uses and is
         # the freshest available reading — inject it so day_high reflects it.
         # Fall back to now_et when the METAR timestamp header fails to parse so
