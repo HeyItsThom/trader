@@ -313,6 +313,13 @@ def get_data():
 
         now_et = datetime.now(EASTERN_TZ)
 
+        # Prefer the most recent AVWX METAR when it is newer than tgftp.
+        # tgftp can lag 5–10 min after a new METAR is issued; AVWX updates faster.
+        if mh_times and (metar_dt is None or mh_times[-1] > metar_dt):
+            metar_dt   = mh_times[-1]
+            metar_temp = mh_temps[-1]
+            metar_time = metar_dt.strftime("%-I:%M %p ET")
+
         # Merge NWS obs + METAR history + latest NWS obs + live tgftp METAR.
         # The live METAR from tgftp.weather.gov is the same feed WU uses and is
         # the freshest available reading — inject it so day_high reflects it.
