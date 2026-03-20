@@ -316,11 +316,13 @@ def get_data():
         # Merge NWS obs + METAR history + latest NWS obs + live tgftp METAR.
         # The live METAR from tgftp.weather.gov is the same feed WU uses and is
         # the freshest available reading — inject it so day_high reflects it.
+        # Fall back to now_et when the METAR timestamp header fails to parse so
+        # the reading is never silently dropped from the merge.
         latest_pair = [(latest_obs_time, latest_obs_temp)] if latest_obs_time else []
+        metar_ts    = metar_dt if metar_dt is not None else now_et
         metar_pair  = (
-            [(metar_dt, metar_temp)]
-            if metar_temp is not None and metar_dt is not None
-               and metar_dt.date() == now_et.date()
+            [(metar_ts, metar_temp)]
+            if metar_temp is not None and metar_ts.date() == now_et.date()
             else []
         )
         combined = sorted(
@@ -388,7 +390,7 @@ def get_data():
                 for t, v in zip(mh_times, mh_temps)
             ],
             "now": now_et.isoformat(),
-            "cur_temp": merged_temps[-1] if merged_temps else None,
+            "cur_temp": metar_temp if metar_temp is not None else (merged_temps[-1] if merged_temps else None),
             "day_high": day_high,
             "fcst_high": fcst_high,
             "hi_time": hi_time,
